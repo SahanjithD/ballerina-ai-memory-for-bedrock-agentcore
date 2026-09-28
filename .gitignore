@@ -1,0 +1,8 @@
+ai.aws.agentcore — Memory Design.md
+plan.md
+target/
+Config.toml
+tests/Config.toml
+.DS_Store
+.gradle/
+build/
