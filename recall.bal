@@ -16,24 +16,34 @@
 import ballerina/ai;
 import ballerina/log;
 
-// Prefixes the block this module appends to the system message's content, so repeated injection
-// across turns (each turn re-reads and re-augments the *stored* system message the delegate
-// returns, never a previously-injected one) stays additive rather than compounding: the delegate
-// always returns the plain stored message, since injection never itself calls `update`.
-const string RECALL_BLOCK_HEADER = "\n\nRelevant long-term memory:\n";
+// A distinguishable name for the synthetic message this module appends, so it is recognizable in
+// logs/traces as this module's own addition rather than a stored message.
+const string RECALL_MESSAGE_NAME = "long_term_memory";
 
-# Wraps an `ai:Memory` to additionally search long-term memory on every `get` call and inject
-# the results into the (existing) system message, as an alternative to the tool-based
-# `LongTermMemoryToolKit` that lets the LLM decide when to search.
+# Wraps an `ai:Memory` to additionally search long-term memory on every `get` call and append the
+# results as an extra message, as an alternative to the tool-based `LongTermMemoryToolKit` that
+# lets the LLM decide when to search.
 #
-# **This is off by default; construct it explicitly to opt in.** Unlike the toolkit, injection
-# runs unconditionally on every turn and its placement depends on `ai:Agent` always treating the
-# first message `get` returns as the system message when one is present - true for `ai:Agent`
-# 1.15.0's current prompt-assembly behavior, but not part of `ai:Memory`'s documented contract, so
-# an upstream change could silently break the injected content's placement. On a session with no
-# stored messages yet (nothing for `ai:Agent` to have derived a system message from), this wrapper
-# deliberately injects nothing rather than inventing system-message content of its own; the empty
-# array is returned unchanged.
+# **This is off by default; construct it explicitly to opt in.** Injection runs unconditionally on
+# every turn, at some latency and `RetrieveMemoryRecords` cost even when the LLM would not have
+# needed it. Two narrower limitations, both inherent to hooking `ai:Memory.get` (the only hook
+# `ai:Memory` offers) rather than bugs to work around:
+#
+# - The query searched is the *last stored* user message, not the query for the turn currently
+# being run - `get(sessionId)` is called before `ai:Agent` appends the new query to history, and
+# `ai:Memory`'s interface gives `get` no way to see it. Recall is therefore always one turn behind.
+# - The appended message is **not** persisted: `ai:Agent` only ever writes back
+# `[systemMessage, userMessage, ...toolPairs, finalAssistantMessage]` for the *current* turn (see
+# the package's design notes), so this module's addition is naturally absent from what
+# `self.delegate.update` is later called with - it is recomputed fresh on every `get` instead of
+# accumulating in storage. That is intentional, not a bug: a fact search result is a point-in-time
+# retrieval that should refresh every turn, and stale copies of it should not pile up in history.
+#
+# This module does not touch the system message: earlier revisions tried augmenting it in place,
+# but `ai:Agent` 1.15.0 unconditionally recomputes `history[0]` from its own configured
+# `instruction` on every run, discarding anything else stored there - so that approach silently
+# had no effect at all. Appending a new message instead survives, because `ai:Agent` only ever
+# rewrites index `0`.
 public isolated class RecallAugmentedMemory {
     *ai:Memory;
 
@@ -49,7 +59,8 @@ public isolated class RecallAugmentedMemory {
     # + delegate - The underlying `ai:Memory` (typically an `agentcore:Memory`) to delegate
     # storage to; only `get` behavior is augmented
     # + connectionConfig - The AWS connection configuration
-    # + memoryId - The identifier (or ARN) of the AgentCore Memory resource to search
+    # + memoryId - The identifier of the AgentCore Memory resource to search - the plain id, not
+    # the full ARN (see `MemoryConfig.memoryId`'s documentation for why)
     # + config - The namespaces/variables/topK to search with, in the same shape
     # `LongTermMemoryToolKit` uses
     # + return - An `Error` if the underlying client fails to initialize or `config` is invalid
@@ -58,8 +69,8 @@ public isolated class RecallAugmentedMemory {
         if config.namespaces.length() == 0 {
             return error Error("RecallAugmentedMemory requires at least one namespace.");
         }
-        if config.topK < 1 {
-            return error Error(string `Invalid topK: '${config.topK}'. Must be a positive integer.`);
+        if config.topK < 1 || config.topK > MAX_PAGE_SIZE {
+            return error Error(string `Invalid topK: '${config.topK}'. Must be between 1 and ${MAX_PAGE_SIZE}.`);
         }
         MemoryClient|Error agentCoreClient = new (connectionConfig);
         if agentCoreClient is Error {
@@ -73,8 +84,10 @@ public isolated class RecallAugmentedMemory {
         self.topK = config.topK;
     }
 
-    # Retrieves the delegate's stored messages, with long-term memory results injected into the
-    # system message when one is present and a query and matching records can be found.
+    # Retrieves the delegate's stored messages, with a long-term memory search result appended as
+    # an extra trailing message when a query and matching records can be found. Never appends to
+    # an empty history - see the class documentation for why an empty array is a hazard, not just
+    # a no-op, for anything that lands at index `0`.
     #
     # + sessionId - The session key
     # + return - The (possibly augmented) messages, or an `ai:MemoryError`
@@ -84,10 +97,6 @@ public isolated class RecallAugmentedMemory {
             return messages;
         }
 
-        ai:ChatMessage first = messages[0];
-        if first !is ai:ChatSystemMessage {
-            return messages;
-        }
         string? query = lastUserQueryText(messages);
         if query is () {
             return messages;
@@ -102,8 +111,11 @@ public isolated class RecallAugmentedMemory {
             return messages;
         }
 
-        messages[0] = injectRecall(first, records);
-        return messages;
+        // A new array, not a mutation of `messages` in place: `messages` may be a reference into
+        // the delegate's own internal state (true of some `ai:Memory` implementations, though not
+        // `agentcore:Memory`, which always allocates a fresh array per `get`), and this wrapper
+        // must not corrupt it.
+        return [...messages, buildRecallMessage(records)];
     }
 
     # Delegates unchanged to the wrapped `ai:Memory`.
@@ -164,21 +176,10 @@ isolated function lastUserQueryText(ai:ChatMessage[] messages) returns string? {
     return ();
 }
 
-isolated function injectRecall(ai:ChatSystemMessage systemMessage, MemoryRecordMatch[] records) returns ai:ChatSystemMessage {
-    string|ai:Prompt content = systemMessage.content;
-    if content !is string {
-        // The system message uses a `Prompt` (raw template) content; injection only supports
-        // plain-string system message content, so the message is returned unmodified.
-        return systemMessage;
-    }
-    string block = RECALL_BLOCK_HEADER;
+isolated function buildRecallMessage(MemoryRecordMatch[] records) returns ai:ChatSystemMessage {
+    string block = "Relevant long-term memory:\n";
     foreach MemoryRecordMatch m in records {
         block += string `- ${m.text}` + "\n";
     }
-    ai:ChatSystemMessage augmented = {role: systemMessage.role, content: content + block};
-    string? name = systemMessage?.name;
-    if name is string {
-        augmented.name = name;
-    }
-    return augmented;
+    return {role: ai:SYSTEM, content: block, name: RECALL_MESSAGE_NAME};
 }
