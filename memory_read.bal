@@ -14,42 +14,25 @@
 // under the License.
 
 import ballerina/ai;
-import ballerina/log;
 
 isolated function readSession(MemoryClient agentCoreClient, string memoryId, string actorId, string sessionId,
         int maxEventsPerGet) returns ai:ChatMessage[]|Error {
     WireEvent[] events = check fetchEvents(agentCoreClient, memoryId, actorId, sessionId, maxEventsPerGet);
     WireEvent[] ordered = sortEventsChronologically(events);
-    WireEvent[] sinceReset = check dropEventsAtOrBeforeLastResetMarker(ordered);
+    WireEvent[] sinceReset = dropEventsAtOrBeforeLastResetMarker(ordered);
     return foldTurnsIntoMessages(sinceReset);
 }
 
-// `ListEvents` documents no ordering guarantee, so every page fetched here is collected before
-// any ordering decision is made; `maxEventsPerGet` (default: one full page) caps the total
-// fetched, since retrieving every page of a very long session would be both slow and, per AWS's
-// pricing model, an unbounded per-call cost.
+// `maxEventsPerGet` is validated (in `Memory.init`) to be at most `MAX_PAGE_SIZE`, so a session's
+// events are always readable in a single `ListEvents` call - there is no pagination loop here to
+// get wrong. If a session has more events than `maxEventsPerGet`, `ListEvents`' own undocumented
+// ordering decides which ones come back; this module cannot fetch "the newest N" without reading
+// every page first (defeating the point of a page-size cap), so that is a known v1 limitation of
+// a plain `maxEventsPerGet`-bounded `get`, not something this function can paper over.
 isolated function fetchEvents(MemoryClient agentCoreClient, string memoryId, string actorId, string sessionId,
         int maxEventsPerGet) returns WireEvent[]|Error {
-    WireEvent[] events = [];
-    string? nextToken = ();
-    boolean firstPage = true;
-    while (firstPage || nextToken is string) && events.length() < maxEventsPerGet {
-        firstPage = false;
-        int remaining = maxEventsPerGet - events.length();
-        int pageSize = remaining < MAX_PAGE_SIZE ? remaining : MAX_PAGE_SIZE;
-        ListEventsResponse page = check agentCoreClient->listEvents(memoryId, actorId, sessionId, pageSize, nextToken);
-        events.push(...page.events);
-        nextToken = page.nextToken;
-    }
-    if events.length() > maxEventsPerGet {
-        events = events.slice(0, maxEventsPerGet);
-    }
-    if nextToken is string {
-        log:printWarn("Session has more AgentCore events than maxEventsPerGet; older turns beyond this cap " +
-            "are not read back.", memoryId = memoryId, actorId = actorId, sessionId = sessionId,
-            maxEventsPerGet = maxEventsPerGet);
-    }
-    return events;
+    ListEventsResponse page = check agentCoreClient->listEvents(memoryId, actorId, sessionId, maxEventsPerGet);
+    return page.events;
 }
 
 // Primary sort key is the client-supplied `eventTimestamp` (see `Memory`'s monotonic-timestamp
@@ -68,10 +51,10 @@ isolated function eventSequenceNumber(string eventId) returns int {
 
 // A soft `delete` writes a reset-marker event rather than physically removing prior events (see
 // `memory_write.bal`); every event at or before the *last* reset marker is void.
-isolated function dropEventsAtOrBeforeLastResetMarker(WireEvent[] chronological) returns WireEvent[]|Error {
+isolated function dropEventsAtOrBeforeLastResetMarker(WireEvent[] chronological) returns WireEvent[] {
     int lastResetIndex = -1;
     foreach int i in 0 ..< chronological.length() {
-        if check isResetMarker(chronological[i].payload) {
+        if isResetMarker(chronological[i].payload) {
             lastResetIndex = i;
         }
     }
@@ -85,12 +68,12 @@ isolated function dropEventsAtOrBeforeLastResetMarker(WireEvent[] chronological)
 // agent turn: `[systemMessage, userMessage, ...toolCallPairs, finalAssistantMessage]` (see the
 // package's design notes). `ai:Agent` resends the same system message on every turn, so it is
 // deduplicated here to the most recently written one rather than accumulated once per turn.
-isolated function foldTurnsIntoMessages(WireEvent[] events) returns ai:ChatMessage[]|Error {
+isolated function foldTurnsIntoMessages(WireEvent[] events) returns ai:ChatMessage[] {
     ai:ChatSystemMessage? systemMessage = ();
     ai:ChatInteractiveMessage[] interactive = [];
 
     foreach WireEvent event in events {
-        ai:ChatMessage[]? turnMessages = check decodeEventPayload(event.payload);
+        ai:ChatMessage[]? turnMessages = decodeEventPayload(event.payload);
         if turnMessages is () {
             continue;
         }

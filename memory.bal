@@ -78,7 +78,11 @@ public isolated class Memory {
     # + sessionId - The session key
     # + return - The session's messages, or an `ai:MemoryError`
     public isolated function get(string sessionId) returns ai:ChatMessage[]|ai:MemoryError {
-        [string, string] keys = check resolveSessionKey(self.sessionKeyConfig, sessionId);
+        [string, string]|Error keys = resolveSessionKey(self.sessionKeyConfig, sessionId);
+        if keys is Error {
+            logAgentCoreFailure("get", sessionId, keys);
+            return keys;
+        }
         var [actorId, agentSessionId] = keys;
         ai:ChatMessage[]|Error result =
             readSession(self.agentCoreClient, self.memoryId, actorId, agentSessionId, self.maxEventsPerGet);
@@ -98,7 +102,11 @@ public isolated class Memory {
         if messages.length() == 0 {
             return;
         }
-        [string, string] keys = check resolveSessionKey(self.sessionKeyConfig, sessionId);
+        [string, string]|Error keys = resolveSessionKey(self.sessionKeyConfig, sessionId);
+        if keys is Error {
+            logAgentCoreFailure("update", sessionId, keys);
+            return keys;
+        }
         var [actorId, agentSessionId] = keys;
         decimal eventTimestamp = self.nextEventTimestamp();
         Error? result = writeTurn(self.agentCoreClient, self.memoryId, actorId, agentSessionId, messages, eventTimestamp);
@@ -113,14 +121,18 @@ public isolated class Memory {
     # + sessionId - The session key
     # + return - `()` on success, or an `ai:MemoryError`
     public isolated function delete(string sessionId) returns ai:MemoryError? {
-        [string, string] keys = check resolveSessionKey(self.sessionKeyConfig, sessionId);
+        [string, string]|Error keys = resolveSessionKey(self.sessionKeyConfig, sessionId);
+        if keys is Error {
+            logAgentCoreFailure("delete", sessionId, keys);
+            return keys;
+        }
         var [actorId, agentSessionId] = keys;
+        decimal eventTimestamp = self.nextEventTimestamp();
         Error? result;
         if self.deleteMode == SOFT {
-            decimal eventTimestamp = self.nextEventTimestamp();
             result = writeResetMarker(self.agentCoreClient, self.memoryId, actorId, agentSessionId, eventTimestamp);
         } else {
-            result = purgeSession(self.agentCoreClient, self.memoryId, actorId, agentSessionId);
+            result = purgeSession(self.agentCoreClient, self.memoryId, actorId, agentSessionId, eventTimestamp);
         }
         if result is Error {
             logAgentCoreFailure("delete", sessionId, result);
