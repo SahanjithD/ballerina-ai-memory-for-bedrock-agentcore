@@ -14,11 +14,15 @@
 // under the License.
 
 // The SigV4 signing name and endpoint-resolution service prefix for the AgentCore Memory
-// data-plane API (CreateEvent, ListEvents, DeleteEvent, RetrieveMemoryRecords).
+// data-plane API (CreateEvent, ListEvents, DeleteEvent, RetrieveMemoryRecords). Also the correct
+// SigV4 signing name for the *control* plane (see `CONTROL_PLANE_SERVICE`) - both planes share one
+// signing name even though their endpoint prefixes differ.
 const string DATA_PLANE_SERVICE = "bedrock-agentcore";
 
-// The SigV4 signing name and endpoint-resolution service prefix for the AgentCore control-plane
-// API. Only `GetMemory` (used by `verifyMemory`) is called against this host.
+// The endpoint-resolution service prefix for the AgentCore control-plane API. Only `GetMemory`
+// (used by `verifyMemory`) is called against this host. Do NOT use this as a SigV4 signing name -
+// the control plane's `signingName` is `bedrock-agentcore` (`DATA_PLANE_SERVICE`), not this value;
+// this is purely a routing/hostname prefix.
 const string CONTROL_PLANE_SERVICE = "bedrock-agentcore-control";
 
 // `CreateEvent.payload` accepts at most 100 items. Every event this module writes carries exactly
@@ -29,6 +33,11 @@ const int MAX_CONVERSATIONAL_ITEMS_PER_EVENT = MAX_PAYLOAD_ITEMS - 1;
 
 // `CreateEvent`/`Event.metadata` accepts at most 15 entries.
 const int MAX_EVENT_METADATA_ENTRIES = 15;
+
+// `Conversational.content` (`Content.text`) requires 1-100,000 characters. Applies only to the
+// `conversational` payload items rendered for AWS's own extraction (see `envelope.bal`) - the
+// blob envelope itself has no such limit and is never trimmed.
+const int MAX_CONVERSATIONAL_TEXT_LENGTH = 100000;
 
 // `ListEvents.maxResults` and `RetrieveMemoryRecords.maxResults` both accept 1-100; both default
 // to 20 server-side when omitted. This module always requests the maximum page size so a plain

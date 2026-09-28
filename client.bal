@@ -44,14 +44,19 @@ public isolated client class MemoryClient {
         self.dataPlaneHost = aws:resolveEndpointHost(DATA_PLANE_SERVICE, config.region, config.endpointConfig);
         self.controlPlaneHost = aws:resolveEndpointHost(CONTROL_PLANE_SERVICE, config.region, config.endpointConfig);
 
-        http:Client|error dataPlaneHttp = new (string `https://${self.dataPlaneHost}`, config.httpConfig);
+        // `aws:resolveEndpoint` (not `resolveEndpointHost`) is used for the client's base URL so
+        // that `endpointConfig.customEndpoint` keeps whatever scheme it was given (e.g. plain
+        // `http://` for a local test double) instead of always being forced onto `https://`.
+        string dataPlaneUrl = aws:resolveEndpoint(DATA_PLANE_SERVICE, config.region, config.endpointConfig);
+        http:Client|error dataPlaneHttp = new (dataPlaneUrl, config.httpConfig);
         if dataPlaneHttp is error {
             return error Error("Failed to initialize the AgentCore data-plane HTTP client: " +
                 dataPlaneHttp.message(), dataPlaneHttp);
         }
         self.dataPlaneHttp = dataPlaneHttp;
 
-        http:Client|error controlPlaneHttp = new (string `https://${self.controlPlaneHost}`, config.httpConfig);
+        string controlPlaneUrl = aws:resolveEndpoint(CONTROL_PLANE_SERVICE, config.region, config.endpointConfig);
+        http:Client|error controlPlaneHttp = new (controlPlaneUrl, config.httpConfig);
         if controlPlaneHttp is error {
             return error Error("Failed to initialize the AgentCore control-plane HTTP client: " +
                 controlPlaneHttp.message(), controlPlaneHttp);
@@ -170,7 +175,12 @@ public isolated client class MemoryClient {
     # + memoryId - The AgentCore Memory resource id
     # + return - The memory resource's `id` and `status`, or an `Error`
     remote isolated function getMemory(string memoryId) returns ControlPlaneMemory|Error {
-        json response = check self.sendSigned(self.controlPlaneHttp, self.controlPlaneHost, CONTROL_PLANE_SERVICE,
+        // The control plane's *endpoint* prefix is "bedrock-agentcore-control", but its SigV4
+        // *signing* name is "bedrock-agentcore" - the same as the data plane (verified against
+        // the service's own model: `endpointPrefix` and `signingName` differ only here). Signing
+        // with `CONTROL_PLANE_SERVICE` would produce a credential scope AWS never issued
+        // credentials against, failing every `verifyMemory` call with `InvalidSignatureException`.
+        json response = check self.sendSigned(self.controlPlaneHttp, self.controlPlaneHost, DATA_PLANE_SERVICE,
             "GET", getMemoryPath(memoryId), ());
         GetMemoryResponse|error decoded = response.fromJsonWithType();
         if decoded is error {
@@ -228,7 +238,11 @@ public isolated client class MemoryClient {
             string signerPath, string httpPath, byte[] payload) returns json|Error {
         auth:Credentials|auth:CredentialResolutionError credentials = self.credentialProvider.getCredentials();
         if credentials is auth:CredentialResolutionError {
-            return error Error("Failed to resolve AWS credentials: " + credentials.message(), credentials);
+            // Not retried: a misconfigured/absent credential source will not start working
+            // between one retry attempt and the next a few seconds later (see `retry.bal`'s
+            // `LOCAL_FAILURE_ERROR_CODE`).
+            return error Error("Failed to resolve AWS credentials: " + credentials.message(),
+                credentials, errorCode = LOCAL_FAILURE_ERROR_CODE);
         }
 
         map<string> headers = payload.length() > 0 ? {"content-type": "application/json"} : {};
@@ -242,7 +256,9 @@ public isolated client class MemoryClient {
         map<string>|auth:SigningError signedHeaders =
             auth:getSignedHeaders(signatureRequest, credentials, self.region, serviceName);
         if signedHeaders is auth:SigningError {
-            return error Error("Failed to sign the AgentCore request: " + signedHeaders.message(), signedHeaders);
+            // Not retried, for the same reason as the credential-resolution failure above.
+            return error Error("Failed to sign the AgentCore request: " + signedHeaders.message(),
+                signedHeaders, errorCode = LOCAL_FAILURE_ERROR_CODE);
         }
 
         http:Request request = new;
@@ -258,6 +274,9 @@ public isolated client class MemoryClient {
 
         http:Response|http:ClientError response = target->execute(method, httpPath, request);
         if response is http:ClientError {
+            // Unlike the credential/signing failures above, a transport failure (connect
+            // timeout, connection reset, DNS blip) is exactly the kind of thing a retry can
+            // paper over, so this one keeps the default "no error code -> retryable" behavior.
             return error Error("Failed to call AgentCore: " + response.message(), response);
         }
         return self.toResult(response);
@@ -278,7 +297,10 @@ public isolated client class MemoryClient {
         string errorMessage = string `AgentCore call failed with HTTP status ${statusCode}`;
         json|http:ClientError errorPayload = response.getJsonPayload();
         if errorPayload is map<json> {
-            json? messageField = errorPayload["message"];
+            // AWS `rest-json` services are inconsistent about the casing of this field across
+            // operations/services; check both rather than silently falling back to the generic
+            // message above and losing the "which parameter is invalid" detail AWS sent.
+            json? messageField = errorPayload["message"] ?: errorPayload["Message"];
             if messageField is string {
                 errorMessage = messageField;
             }
