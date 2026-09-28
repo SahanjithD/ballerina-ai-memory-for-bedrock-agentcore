@@ -330,6 +330,59 @@ function testMaxEventsPerGetIsPassedToListEvents() returns error? {
 }
 
 @test:Config
+function testGetDoesNotFollowAContinuationToken() returns error? {
+    resetMock();
+    Memory memory = check new (mockMemoryConfig({actorId: "user-42"}, SOFT, 2));
+    foreach int i in 0 ..< 5 {
+        check memory.update("chat-notoken", [<ai:ChatUserMessage>{role: ai:USER, content: string `m${i}`}]);
+    }
+
+    // The mock offers a `nextToken` here; `maxEventsPerGet` is capped at the AWS page size precisely
+    // so `get` stays a single call, and a reintroduced pagination loop would show up as extra calls.
+    int callsBefore = mockCallCount("ListEvents");
+    test:assertEquals((check memory.get("chat-notoken")).length(), 2);
+    test:assertEquals(mockCallCount("ListEvents"), callsBefore + 1);
+    check memory.close();
+}
+
+@test:Config
+function testAPlainTurnCostsOneListAndOneCreate() returns error? {
+    resetMock();
+    Memory memory = check new (mockMemoryConfig({actorId: "user-42"}));
+
+    _ = check memory.get("chat-budget");
+    check memory.update("chat-budget", [
+        {role: ai:SYSTEM, content: "You are helpful."},
+        {role: ai:USER, content: "hi"},
+        {role: ai:ASSISTANT, content: "hello"}
+    ]);
+
+    test:assertEquals(mockCallCount("ListEvents"), 1);
+    test:assertEquals(mockCallCount("CreateEvent"), 1);
+    test:assertEquals(mockCallCount("DeleteEvent"), 0);
+    test:assertEquals(mockCallCount("GetMemory"), 0);
+    check memory.close();
+}
+
+@test:Config
+function testPurgeRelistsFromScratchInsteadOfPaging() returns error? {
+    resetMock();
+    Memory memory = check new (mockMemoryConfig({actorId: "user-42"}, PHYSICAL));
+    check memory.update("chat-purge-paging", [<ai:ChatUserMessage>{role: ai:USER, content: "one"}]);
+    check memory.update("chat-purge-paging", [<ai:ChatUserMessage>{role: ai:USER, content: "two"}]);
+
+    check memory.delete("chat-purge-paging");
+
+    // A token minted before the deletes started is not guaranteed to stay valid across them, so
+    // each round must ask for a fresh list.
+    test:assertTrue(mockCallCount("ListEvents") >= 2, "a purge must re-list after deleting");
+    foreach json body in mockListEventsBodies() {
+        test:assertFalse((<map<json>>body).hasKey("nextToken"), "a purge must never page with a token");
+    }
+    check memory.close();
+}
+
+@test:Config
 function testVerifyMemoryAcceptsAnActiveResource() returns error? {
     resetMock();
     MemoryConfig config = mockMemoryConfig({actorId: "user-42"});
@@ -350,6 +403,18 @@ function testVerifyMemoryRejectsAnInactiveResource() {
     Memory|Error memory = new (config);
     test:assertTrue(memory is Error);
     test:assertTrue((<Error>memory).message().includes("is not active"));
+}
+
+@test:Config
+function testVerifyMemorySurfacesAControlPlaneFailure() {
+    resetMock();
+    setMockFailures(1, 403, "AccessDeniedException", "GetMemory");
+    MemoryConfig config = mockMemoryConfig({actorId: "user-42"});
+    config.verifyMemory = true;
+
+    Memory|Error memory = new (config);
+    test:assertTrue(memory is Error);
+    test:assertTrue((<Error>memory).message().includes("Failed to verify"));
 }
 
 @test:Config

@@ -73,12 +73,15 @@ type MockState record {|
     map<string> authHeaders = {};
     string[] deleteRawPaths = [];
     map<json> recordsByNamespace = {};
+    json[] listEventsBodies = [];
     string[] retrieveNamespaces = [];
     json[] retrieveBodies = [];
     string memoryStatus = "ACTIVE";
     int failuresRemaining = 0;
     int failureStatus = 429;
     string failureErrorType = "ThrottledException";
+    // "" fails whichever operation comes next; a name confines the injected failure to that one.
+    string failureOperation = "";
 |};
 
 isolated MockState mockState = {};
@@ -87,7 +90,7 @@ service / on new http:Listener(mockPort) {
 
     resource function post memories/[string memoryId]/events(http:Request request) returns json|http:Response|error {
         recordCall("CreateEvent", request);
-        http:Response? failure = injectedFailure();
+        http:Response? failure = injectedFailure("CreateEvent");
         if failure is http:Response {
             return failure;
         }
@@ -114,21 +117,26 @@ service / on new http:Listener(mockPort) {
     resource function post memories/[string memoryId]/actor/[string actorId]/sessions/[string sessionId](
             http:Request request) returns json|http:Response|error {
         recordCall("ListEvents", request);
-        http:Response? failure = injectedFailure();
+        http:Response? failure = injectedFailure("ListEvents");
         if failure is http:Response {
             return failure;
         }
         map<json> body = <map<json>>check request.getJsonPayload();
+        recordListEvents(body);
         int maxResults = body["maxResults"] is int ? <int>body["maxResults"] : 20;
+        int total = storedMockEvents(actorId, sessionId, memoryId).length();
         MockEvent[] events = listMockEvents(memoryId, actorId, sessionId, maxResults);
-        return {"events": from MockEvent event in events select wireEventJson(memoryId, event)};
+        json response = {"events": from MockEvent event in events select wireEventJson(memoryId, event)};
+        // Offer a continuation token whenever the page was truncated, so a caller that pages when it
+        // should not shows up as an extra ListEvents call.
+        return total > events.length() ? check (<map<json>>response).mergeJson({"nextToken": "mock-next"}) : response;
     }
 
     resource function delete memories/[string memoryId]/actor/[string actorId]/sessions/[string sessionId]/events/
             [string eventId](http:Request request) returns json|http:Response {
         recordCall("DeleteEvent", request);
         recordDeleteRawPath(request.rawPath);
-        http:Response? failure = injectedFailure();
+        http:Response? failure = injectedFailure("DeleteEvent");
         if failure is http:Response {
             return failure;
         }
@@ -141,7 +149,7 @@ service / on new http:Listener(mockPort) {
     resource function post memories/[string memoryId]/retrieve(http:Request request)
             returns json|http:Response|error {
         recordCall("RetrieveMemoryRecords", request);
-        http:Response? failure = injectedFailure();
+        http:Response? failure = injectedFailure("RetrieveMemoryRecords");
         if failure is http:Response {
             return failure;
         }
@@ -157,7 +165,7 @@ service / on new http:Listener(mockPort) {
 
     resource function get memories/[string memoryId]/details(http:Request request) returns json|http:Response {
         recordCall("GetMemory", request);
-        http:Response? failure = injectedFailure();
+        http:Response? failure = injectedFailure("GetMemory");
         if failure is http:Response {
             return failure;
         }
@@ -212,6 +220,12 @@ isolated function recordCall(string operation, http:Request request) {
 isolated function recordDeleteRawPath(string rawPath) {
     lock {
         mockState.deleteRawPaths.push(rawPath);
+    }
+}
+
+isolated function recordListEvents(map<json> body) {
+    lock {
+        mockState.listEventsBodies.push(body.clone());
     }
 }
 
@@ -285,11 +299,12 @@ isolated function deleteMockEvent(string memoryId, string actorId, string sessio
     }
 }
 
-isolated function injectedFailure() returns http:Response? {
+isolated function injectedFailure(string operation) returns http:Response? {
     int status;
     string errorType;
     lock {
-        if mockState.failuresRemaining <= 0 {
+        if mockState.failuresRemaining <= 0 ||
+            (mockState.failureOperation != "" && mockState.failureOperation != operation) {
             return ();
         }
         mockState.failuresRemaining -= 1;
@@ -324,10 +339,12 @@ isolated function resetMock() {
         mockState.authHeaders = {};
         mockState.deleteRawPaths = [];
         mockState.recordsByNamespace = {};
+        mockState.listEventsBodies = [];
         mockState.retrieveNamespaces = [];
         mockState.retrieveBodies = [];
         mockState.memoryStatus = "ACTIVE";
         mockState.failuresRemaining = 0;
+        mockState.failureOperation = "";
     }
 }
 
@@ -343,11 +360,12 @@ isolated function setMockMemoryStatus(string status) {
     }
 }
 
-isolated function setMockFailures(int count, int status, string errorType) {
+isolated function setMockFailures(int count, int status, string errorType, string operation = "") {
     lock {
         mockState.failuresRemaining = count;
         mockState.failureStatus = status;
         mockState.failureErrorType = errorType;
+        mockState.failureOperation = operation;
     }
 }
 
@@ -372,6 +390,12 @@ isolated function mockAuthHeader(string operation) returns string {
 isolated function mockDeletePaths() returns string[] {
     lock {
         return mockState.deleteRawPaths.clone();
+    }
+}
+
+isolated function mockListEventsBodies() returns json[] {
+    lock {
+        return mockState.listEventsBodies.clone();
     }
 }
 
