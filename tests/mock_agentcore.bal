@@ -90,7 +90,7 @@ service / on new http:Listener(mockPort) {
 
     resource function post memories/[string memoryId]/events(http:Request request) returns json|http:Response|error {
         recordCall("CreateEvent", request);
-        http:Response? failure = injectedFailure("CreateEvent");
+        http:Response? failure = preflightFailure("CreateEvent", request);
         if failure is http:Response {
             return failure;
         }
@@ -117,7 +117,7 @@ service / on new http:Listener(mockPort) {
     resource function post memories/[string memoryId]/actor/[string actorId]/sessions/[string sessionId](
             http:Request request) returns json|http:Response|error {
         recordCall("ListEvents", request);
-        http:Response? failure = injectedFailure("ListEvents");
+        http:Response? failure = preflightFailure("ListEvents", request);
         if failure is http:Response {
             return failure;
         }
@@ -136,7 +136,7 @@ service / on new http:Listener(mockPort) {
             [string eventId](http:Request request) returns json|http:Response {
         recordCall("DeleteEvent", request);
         recordDeleteRawPath(request.rawPath);
-        http:Response? failure = injectedFailure("DeleteEvent");
+        http:Response? failure = preflightFailure("DeleteEvent", request);
         if failure is http:Response {
             return failure;
         }
@@ -149,7 +149,7 @@ service / on new http:Listener(mockPort) {
     resource function post memories/[string memoryId]/retrieve(http:Request request)
             returns json|http:Response|error {
         recordCall("RetrieveMemoryRecords", request);
-        http:Response? failure = injectedFailure("RetrieveMemoryRecords");
+        http:Response? failure = preflightFailure("RetrieveMemoryRecords", request);
         if failure is http:Response {
             return failure;
         }
@@ -165,7 +165,7 @@ service / on new http:Listener(mockPort) {
 
     resource function get memories/[string memoryId]/details(http:Request request) returns json|http:Response {
         recordCall("GetMemory", request);
-        http:Response? failure = injectedFailure("GetMemory");
+        http:Response? failure = preflightFailure("GetMemory", request);
         if failure is http:Response {
             return failure;
         }
@@ -297,6 +297,17 @@ isolated function deleteMockEvent(string memoryId, string actorId, string sessio
         mockState.events[key] = remaining;
         return true;
     }
+}
+
+// Every AgentCore call must arrive signed; an unsigned one would mean the client skipped SigV4
+// entirely, which no assertion on a later response body would catch.
+isolated function preflightFailure(string operation, http:Request request) returns http:Response? {
+    string|http:HeaderNotFoundError authorization = request.getHeader("Authorization");
+    if authorization !is string || !authorization.startsWith("AWS4-HMAC-SHA256 ") ||
+        !authorization.includes("Credential=") || !authorization.includes("Signature=") {
+        return awsFailure(403, "AccessDeniedException", "missing or malformed SigV4 Authorization header");
+    }
+    return injectedFailure(operation);
 }
 
 isolated function injectedFailure(string operation) returns http:Response? {
