@@ -39,7 +39,7 @@ public isolated client class MemoryClient {
     # + config - The connection configuration
     # + return - An `Error` if the underlying HTTP clients or credential provider fail to
     # initialize
-    public isolated function init(*ConnectionConfig config) returns Error? {
+    public isolated function init(ConnectionConfig config) returns Error? {
         self.region = config.region;
         self.dataPlaneHost = aws:resolveEndpointHost(DATA_PLANE_SERVICE, config.region, config.endpointConfig);
         self.controlPlaneHost = aws:resolveEndpointHost(CONTROL_PLANE_SERVICE, config.region, config.endpointConfig);
