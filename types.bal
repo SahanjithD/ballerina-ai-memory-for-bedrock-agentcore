@@ -69,7 +69,11 @@ public type ConnectionConfig record {|
 # Configuration for `agentcore:Memory`.
 public type MemoryConfig record {|
     *ConnectionConfig;
-    # The identifier (or ARN) of the AgentCore Memory resource to read from and write to.
+    # The identifier of the AgentCore Memory resource to read from and write to - the plain id
+    # (e.g. `my-memory-ab12cd34ef`), not the full ARN. This module interpolates `memoryId` directly
+    # into both the signed request path and the HTTP request path without URL-encoding it, and the
+    # control-plane `GetMemory` id pattern used by `verifyMemory` does not accept an ARN either; an
+    # ARN's embedded `:`/`/` characters would break both.
     string memoryId;
     # How `ai:Memory` session keys are mapped to AgentCore `actorId`/`sessionId` pairs.
     SessionKeyConfig sessionKeyConfig;
@@ -80,9 +84,11 @@ public type MemoryConfig record {|
     # `bedrock-agentcore:GetMemory` permission in addition to the data-plane permissions. Defaults
     # to `false` so initialization never needs control-plane access.
     boolean verifyMemory = false;
-    # The maximum number of events read back per `get` call before the client-side page limit is
-    # reached; each page is one `ListEvents` call of up to 100 events. Defaults to 100 (a single
-    # page), which covers the common case of a plain back-and-forth conversation in one round trip.
+    # The `maxResults` requested on the single `ListEvents` call each `get` makes (1-100; AgentCore
+    # allows no larger page). Defaults to 100. If a session has more events than this, which ones
+    # come back is `ListEvents`' own undocumented choice - this module does not page further to
+    # find "the rest", since paging every page of a very long session would be both slow and, per
+    # AWS's pricing model, an unbounded per-call cost.
     int maxEventsPerGet = 100;
 |};
 

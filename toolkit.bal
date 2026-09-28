@@ -37,7 +37,8 @@ public isolated class LongTermMemoryToolKit {
     # Initializes the toolkit.
     #
     # + connectionConfig - The AWS connection configuration
-    # + memoryId - The identifier (or ARN) of the AgentCore Memory resource to search
+    # + memoryId - The identifier of the AgentCore Memory resource to search - the plain id, not
+    # the full ARN (see `MemoryConfig.memoryId`'s documentation for why)
     # + config - The toolkit configuration
     # + return - An `Error` if the underlying client fails to initialize or `config` is invalid
     public isolated function init(ConnectionConfig connectionConfig, string memoryId,
@@ -45,8 +46,8 @@ public isolated class LongTermMemoryToolKit {
         if config.namespaces.length() == 0 {
             return error Error("LongTermMemoryToolKit requires at least one namespace.");
         }
-        if config.topK < 1 {
-            return error Error(string `Invalid topK: '${config.topK}'. Must be a positive integer.`);
+        if config.topK < 1 || config.topK > MAX_PAGE_SIZE {
+            return error Error(string `Invalid topK: '${config.topK}'. Must be between 1 and ${MAX_PAGE_SIZE}.`);
         }
 
         MemoryClient|Error agentCoreClient = new (connectionConfig);
@@ -83,6 +84,15 @@ public isolated class LongTermMemoryToolKit {
     #
     # + return - An array containing the single `searchMemory` tool
     public isolated function getTools() returns ai:ToolConfig[] => self.tools;
+
+    # Releases the resources held by this toolkit's underlying `MemoryClient` (its HTTP clients
+    # and, unless an existing `auth:CredentialProvider` was passed in, its own credential
+    # provider).
+    #
+    # + return - An `Error` if releasing resources fails, or `()`
+    public isolated function close() returns Error? {
+        return self.agentCoreClient.close();
+    }
 
     # Searches every configured namespace for records relevant to `input.query`, merges the
     # results, and returns the top `topK` by score. Issues exactly one `RetrieveMemoryRecords`
@@ -126,17 +136,20 @@ isolated function toMemoryRecordMatch(MemoryRecordSummary summary) returns Memor
     };
 }
 
+// AWS currently caps `namespaces` at one entry per record (`NamespacesList` max: 1), so there is
+// only ever one to pick from here, not a "most specific of several" choice - this labeling logic
+// would need revisiting if AWS ever allows more.
 isolated function recordLabel(MemoryRecordSummary summary) returns string {
     if summary.namespaces.length() == 0 {
         return summary.memoryRecordId;
     }
-    string mostSpecific = summary.namespaces[0];
-    string[] segments = re `/`.split(mostSpecific);
+    string namespace = summary.namespaces[0];
+    string[] segments = re `/`.split(namespace);
     string? lastNonEmpty = ();
     foreach string segment in segments {
         if segment.length() > 0 {
             lastNonEmpty = segment;
         }
     }
-    return lastNonEmpty is string ? lastNonEmpty : mostSpecific;
+    return lastNonEmpty is string ? lastNonEmpty : namespace;
 }

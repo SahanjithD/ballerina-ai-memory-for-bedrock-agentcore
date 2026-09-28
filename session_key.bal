@@ -15,15 +15,18 @@
 
 import ballerina/crypto;
 import ballerina/lang.regexp;
+import ballerina/log;
 
 // AWS's own `actorId` pattern allows `/` and `:`. This module still refuses to pass them through
 // unsanitized: `actorId` is a URI *path segment* in `ListEvents`/`DeleteEvent`
-// (`/memories/{memoryId}/actor/{actorId}/sessions/{sessionId}`), and
-// `aws.auth:SignatureRequest.path` is documented "unencoded" - a raw `/` inside a value meant to
-// be one path segment would be canonicalized by the signer as an *extra* segment boundary,
-// corrupting the signature. `sessionId`'s own AWS pattern excludes `/` and `:` outright, so it
-// gets the same treatment here for uniformity. The safe charset below is intentionally a strict
-// subset of what AWS allows for either field.
+// (`/memories/{memoryId}/actor/{actorId}/sessions/{sessionId}`), and a raw `/` inside a value
+// meant to be one path segment would split into an extra route segment, breaking the request's
+// routing outright. A raw `:` is a narrower but still real hazard: `aws.auth`'s SigV4 signer
+// percent-encodes `:` (as `%3A`) when it canonicalizes the path, but the id is sent on the wire
+// unencoded - a mismatch between what was signed and what was sent, failing signature validation.
+// `sessionId`'s own AWS pattern excludes `/` and `:` outright, so it gets the same treatment here
+// for uniformity. The safe charset below is intentionally a strict subset of what AWS allows for
+// either field.
 final regexp:RegExp & readonly SAFE_ID_PATTERN = re `^[a-zA-Z0-9][a-zA-Z0-9_-]*$`;
 
 const int MAX_ACTOR_ID_LENGTH = 255;
@@ -40,9 +43,23 @@ isolated function sanitizeId(string raw, int maxLength) returns string {
     return "h-" + digest.toBase16();
 }
 
-isolated function sanitizeActorId(string raw) returns string => sanitizeId(raw, MAX_ACTOR_ID_LENGTH);
+isolated function sanitizeActorId(string raw) returns string => logIfSanitized("actorId", raw, sanitizeId(raw, MAX_ACTOR_ID_LENGTH));
 
-isolated function sanitizeSessionId(string raw) returns string => sanitizeId(raw, MAX_SESSION_ID_LENGTH);
+isolated function sanitizeSessionId(string raw) returns string =>
+    logIfSanitized("sessionId", raw, sanitizeId(raw, MAX_SESSION_ID_LENGTH));
+
+// A raw id that gets hashed is stored/looked-up under a value that does not appear anywhere in
+// the AWS console or another SDK's view of the same events - worth a one-time-per-call WARN so an
+// operator debugging "where did my session go" has a lead, rather than discovering this only by
+// reading this file.
+isolated function logIfSanitized(string idKind, string raw, string sanitized) returns string {
+    if raw != sanitized {
+        log:printWarn(string `AgentCore ${idKind} contains characters unsafe for a URI path segment ` +
+            "and was replaced with a deterministic hash for all AgentCore calls.",
+            raw = raw, sanitized = sanitized);
+    }
+    return sanitized;
+}
 
 # Resolves the AgentCore `[actorId, sessionId]` pair to use for the given `ai:Memory` session key.
 #
@@ -60,7 +77,8 @@ isolated function resolveSessionKey(SessionKeyConfig config, string sessionId) r
 
     string separator = config.separator;
     int? splitAt = sessionId.indexOf(separator);
-    if splitAt is () || splitAt == 0 || splitAt == sessionId.length() - separator.length() {
+    boolean hasExactlyOneOccurrence = splitAt is int && sessionId.indexOf(separator, splitAt + 1) is ();
+    if splitAt is () || !hasExactlyOneOccurrence || splitAt == 0 || splitAt == sessionId.length() - separator.length() {
         return error Error(string `Invalid session key: '${sessionId}' must contain the separator ` +
             string `'${separator}' exactly once, with a non-empty actor id and session id on ` +
             "either side.");

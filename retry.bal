@@ -27,7 +27,17 @@ final readonly & string[] RETRYABLE_ERROR_CODES = [
     "InternalFailure"
 ];
 
+// Marks an `Error` built before any HTTP call was attempted - credential resolution or SigV4
+// signing failed locally (see `client.bal`'s `sendOnce`). These are deterministic misconfiguration
+// problems (no credentials available, a malformed region, ...) that will not start succeeding a
+// few seconds later, so they are excluded from the "no error code -> retryable" default below,
+// unlike a genuine transport failure (connection reset, DNS blip), which keeps that default.
+const string LOCAL_FAILURE_ERROR_CODE = "LocalFailure";
+
 isolated function isRetryableError(int? httpStatusCode, string? errorCode) returns boolean {
+    if errorCode == LOCAL_FAILURE_ERROR_CODE {
+        return false;
+    }
     if errorCode is string {
         foreach string retryableCode in RETRYABLE_ERROR_CODES {
             if errorCode == retryableCode {
@@ -38,8 +48,8 @@ isolated function isRetryableError(int? httpStatusCode, string? errorCode) retur
     if httpStatusCode is int {
         return httpStatusCode == 429 || httpStatusCode >= 500;
     }
-    // No response was received at all (connection failure, credential/signing failure, timeout):
-    // worth a retry.
+    // No response was received at all and no error code was set: a genuine transport failure
+    // (connection failure, timeout) rather than a local pre-flight failure - worth a retry.
     return true;
 }
 

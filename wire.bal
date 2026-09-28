@@ -19,13 +19,19 @@ import ballerina/time;
 // Memory data-plane API (`CreateEvent`, `ListEvents`, `DeleteEvent`, `RetrieveMemoryRecords`) and
 // the control-plane `GetMemory` operation. Field names and nesting must match the wire exactly -
 // they are not "cleaned up" to look more Ballerina-idiomatic.
+//
+// *Response* records are deliberately open (`record { ... }`, not `record {| ... |}`): AWS adds
+// response fields to existing operations routinely, and a closed record's `fromJsonWithType`
+// fails on any field it does not know about - which would take every `get`/`searchMemory` call
+// down at once the day AWS adds one. *Request* records stay closed: this module fully controls
+// what it sends, so there is nothing to be lenient about there.
 
-type WireBranch record {|
+type WireBranch record {
     string name;
     string rootEventId?;
-|};
+};
 
-type WireEvent record {|
+type WireEvent record {
     string actorId;
     WireBranch branch?;
     string eventId;
@@ -34,7 +40,7 @@ type WireEvent record {|
     map<json> metadata?;
     json[] payload;
     string sessionId;
-|};
+};
 
 type CreateEventRequest record {|
     string actorId;
@@ -45,9 +51,9 @@ type CreateEventRequest record {|
     string sessionId?;
 |};
 
-type CreateEventResponse record {|
+type CreateEventResponse record {
     WireEvent event;
-|};
+};
 
 type FilterExpression record {|
     json left;
@@ -66,10 +72,10 @@ type ListEventsRequest record {|
     string nextToken?;
 |};
 
-type ListEventsResponse record {|
+type ListEventsResponse record {
     WireEvent[] events = [];
     string nextToken?;
-|};
+};
 
 type DeleteEventResponse record {|
     string eventId;
@@ -90,7 +96,7 @@ type RetrieveMemoryRecordsRequest record {|
     SearchCriteria searchCriteria;
 |};
 
-type MemoryRecordSummary record {|
+type MemoryRecordSummary record {
     map<json> content;
     decimal createdAt;
     string memoryRecordId;
@@ -98,18 +104,18 @@ type MemoryRecordSummary record {|
     map<json> metadata?;
     string[] namespaces = [];
     float score?;
-|};
+};
 
-type RetrieveMemoryRecordsResponse record {|
+type RetrieveMemoryRecordsResponse record {
     MemoryRecordSummary[] memoryRecordSummaries = [];
     string nextToken?;
-|};
+};
 
 // Control plane (`verifyMemory` only). Only the fields this module actually reads are typed; the
 // rest of the (much larger) `Memory` object is deliberately left untyped.
-type GetMemoryResponse record {|
+type GetMemoryResponse record {
     ControlPlaneMemory memory;
-|};
+};
 
 type ControlPlaneMemory record {
     string id;
