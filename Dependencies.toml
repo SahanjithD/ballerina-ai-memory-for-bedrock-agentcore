@@ -264,6 +264,9 @@ dependencies = [
 	{org = "ballerina", name = "lang.value"},
 	{org = "ballerina", name = "observe"}
 ]
+modules = [
+	{org = "ballerina", packageName = "log", moduleName = "log"}
+]
 
 [[package]]
 org = "ballerina"
@@ -413,6 +416,7 @@ dependencies = [
 	{org = "ballerina", name = "crypto"},
 	{org = "ballerina", name = "http"},
 	{org = "ballerina", name = "lang.regexp"},
+	{org = "ballerina", name = "log"},
 	{org = "ballerinai", name = "observe"},
 	{org = "ballerinax", name = "aws"}
 ]
