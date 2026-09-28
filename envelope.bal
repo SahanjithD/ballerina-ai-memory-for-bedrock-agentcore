@@ -25,11 +25,17 @@ const int ENVELOPE_VERSION = 1;
 
 // Marks a blob envelope as a soft-delete reset marker: `memory_read.bal` treats every event at or
 // before a reset marker as void when folding a session's history back into a message list.
-type EnvelopeBlob record {|
+//
+// Deliberately an *open* record: the same AgentCore Memory resource can carry events from other
+// writers (a future version of this module, or another SDK/framework entirely) whose `blob` item
+// is not this shape at all. `findBlob` below treats anything that isn't recognizably "ours" -
+// wrong/missing `v`, or a `messages` field that doesn't decode - as simply not an envelope this
+// module can read, not as a fatal error for the whole session.
+type EnvelopeBlob record {
     int v = ENVELOPE_VERSION;
     boolean reset = false;
     DatabaseMessage[] messages;
-|};
+};
 
 # Builds the `payload` array for one `CreateEvent` call representing a single agent turn.
 #
@@ -79,19 +85,19 @@ isolated function conversationalItems(ai:ChatMessage[] messages) returns json[] 
 // textual content (a pure tool call, or a tool result with no text) have nothing to render.
 isolated function renderConversationalItem(ai:ChatMessage message) returns [string, string]? {
     if message is ai:ChatUserMessage {
-        return [ROLE_USER, renderContent(message.content)];
+        return clampedConversationalItem(ROLE_USER, renderContent(message.content));
     }
     if message is ai:ChatAssistantMessage {
         string? content = message.content;
         if content is string {
-            return [ROLE_ASSISTANT, content];
+            return clampedConversationalItem(ROLE_ASSISTANT, content);
         }
         return ();
     }
     if message is ai:ChatFunctionMessage {
         string? content = message.content;
         if content is string {
-            return [ROLE_TOOL, content];
+            return clampedConversationalItem(ROLE_TOOL, content);
         }
         return ();
     }
@@ -99,15 +105,31 @@ isolated function renderConversationalItem(ai:ChatMessage message) returns [stri
     return ();
 }
 
+// `Content.text` requires 1-100,000 characters. An empty tool result (very common: many tools
+// return "" on a no-op success) or an oversized one (a large HTTP/file-read result) would
+// otherwise fail AWS's validation for the *whole event*, including the lossless blob item -
+// silently losing the entire turn, since `ai:Agent` only logs `Memory.update` failures at debug
+// level. Skipping/truncating here keeps that failure mode from ever reaching AWS.
+isolated function clampedConversationalItem(string role, string text) returns [string, string]? {
+    if text.length() == 0 {
+        return ();
+    }
+    if text.length() > MAX_CONVERSATIONAL_TEXT_LENGTH {
+        return [role, text.substring(0, MAX_CONVERSATIONAL_TEXT_LENGTH)];
+    }
+    return [role, text];
+}
+
 # Decodes the messages of a single event from its `payload` array, i.e. the messages passed to the
 # `ai:Memory.update` call that produced it.
 #
 # + payload - The event's payload array, as returned by `ListEvents`/`CreateEvent`
-# + return - `()` if the payload carries no blob item (not an event this module wrote, or a
-# payload fetched with `includePayloads: false`); otherwise the decoded turn - empty for a
-# soft-delete reset marker - or an `Error` if the blob item cannot be decoded
-isolated function decodeEventPayload(json[] payload) returns ai:ChatMessage[]|Error? {
-    EnvelopeBlob? blob = check findBlob(payload);
+# + return - `()` if the payload carries no blob item this module recognizes (not an event this
+# module wrote, a payload fetched with `includePayloads: false`, or a blob item this build's
+# `EnvelopeBlob` shape cannot decode - see `findBlob`); otherwise the decoded turn, empty for a
+# soft-delete reset marker
+isolated function decodeEventPayload(json[] payload) returns ai:ChatMessage[]? {
+    EnvelopeBlob? blob = findBlob(payload);
     if blob is () {
         return ();
     }
@@ -117,26 +139,38 @@ isolated function decodeEventPayload(json[] payload) returns ai:ChatMessage[]|Er
 # Returns whether the event's payload carries a soft-delete reset marker blob.
 #
 # + payload - The event's payload array
-# + return - `true` if the payload's blob item is a reset marker, `false` otherwise (including
-# when there is no blob item), or an `Error` if the blob item cannot be decoded
-isolated function isResetMarker(json[] payload) returns boolean|Error {
-    EnvelopeBlob? blob = check findBlob(payload);
+# + return - `true` if the payload's blob item is a reset marker, `false` otherwise, including
+# when there is no blob item this module recognizes
+isolated function isResetMarker(json[] payload) returns boolean {
+    EnvelopeBlob? blob = findBlob(payload);
     return blob is EnvelopeBlob && blob.reset;
 }
 
-isolated function findBlob(json[] payload) returns EnvelopeBlob?|Error {
+// A session's events are not necessarily all written by this module: the same AgentCore Memory
+// resource can be shared with another SDK/framework, or read by a future/older build of this
+// module. A `blob` item that isn't recognizably one of *this* build's envelopes - wrong/missing
+// `v`, or a shape `EnvelopeBlob` can't decode - is treated as "not ours" and skipped, rather than
+// failing `get` for the whole session over one foreign or forward-incompatible event.
+isolated function findBlob(json[] payload) returns EnvelopeBlob? {
     foreach json item in payload {
-        if item is map<json> {
-            json? blobJson = item["blob"];
-            if blobJson is () {
-                continue;
-            }
-            EnvelopeBlob|error blob = blobJson.fromJsonWithType();
-            if blob is error {
-                return error Error("Failed to decode an AgentCore event's blob envelope: " + blob.message(), blob);
-            }
-            return blob;
+        if item !is map<json> {
+            continue;
         }
+        json? blobJson = item["blob"];
+        if blobJson !is map<json> {
+            continue;
+        }
+        json? versionField = blobJson["v"];
+        if versionField != ENVELOPE_VERSION {
+            continue;
+        }
+        EnvelopeBlob|error blob = blobJson.fromJsonWithType();
+        if blob is error {
+            log:printWarn("Skipping an AgentCore event blob item that looked like this module's " +
+                "envelope (matching version) but failed to decode.", blob);
+            continue;
+        }
+        return blob;
     }
     return ();
 }
