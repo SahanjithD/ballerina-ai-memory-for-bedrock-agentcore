@@ -82,6 +82,9 @@ dependencies = [
 	{org = "ballerina", name = "jballerina.java"},
 	{org = "ballerina", name = "time"}
 ]
+modules = [
+	{org = "ballerina", packageName = "crypto", moduleName = "crypto"}
+]
 
 [[package]]
 org = "ballerina"
@@ -139,6 +142,10 @@ dependencies = [
 	{org = "ballerina", name = "observe"},
 	{org = "ballerina", name = "time"},
 	{org = "ballerina", name = "url"}
+]
+modules = [
+	{org = "ballerina", packageName = "http", moduleName = "http"},
+	{org = "ballerina", packageName = "http", moduleName = "http.httpscerr"}
 ]
 
 [[package]]
@@ -217,6 +224,9 @@ name = "lang.regexp"
 version = "0.0.0"
 dependencies = [
 	{org = "ballerina", name = "jballerina.java"}
+]
+modules = [
+	{org = "ballerina", packageName = "lang.regexp", moduleName = "lang.regexp"}
 ]
 
 [[package]]
@@ -400,6 +410,9 @@ name = "ai.aws.agentcore"
 version = "0.1.0"
 dependencies = [
 	{org = "ballerina", name = "ai"},
+	{org = "ballerina", name = "crypto"},
+	{org = "ballerina", name = "http"},
+	{org = "ballerina", name = "lang.regexp"},
 	{org = "ballerinai", name = "observe"},
 	{org = "ballerinax", name = "aws"}
 ]
