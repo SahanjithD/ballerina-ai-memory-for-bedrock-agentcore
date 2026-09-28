@@ -80,7 +80,12 @@ public isolated class Memory {
     public isolated function get(string sessionId) returns ai:ChatMessage[]|ai:MemoryError {
         [string, string] keys = check resolveSessionKey(self.sessionKeyConfig, sessionId);
         var [actorId, agentSessionId] = keys;
-        return readSession(self.agentCoreClient, self.memoryId, actorId, agentSessionId, self.maxEventsPerGet);
+        ai:ChatMessage[]|Error result =
+            readSession(self.agentCoreClient, self.memoryId, actorId, agentSessionId, self.maxEventsPerGet);
+        if result is Error {
+            logAgentCoreFailure("get", sessionId, result);
+        }
+        return result;
     }
 
     # Stores one turn's messages as a single AgentCore event.
@@ -96,7 +101,11 @@ public isolated class Memory {
         [string, string] keys = check resolveSessionKey(self.sessionKeyConfig, sessionId);
         var [actorId, agentSessionId] = keys;
         decimal eventTimestamp = self.nextEventTimestamp();
-        return writeTurn(self.agentCoreClient, self.memoryId, actorId, agentSessionId, messages, eventTimestamp);
+        Error? result = writeTurn(self.agentCoreClient, self.memoryId, actorId, agentSessionId, messages, eventTimestamp);
+        if result is Error {
+            logAgentCoreFailure("update", sessionId, result);
+        }
+        return result;
     }
 
     # Deletes a session's history, per the configured `DeleteMode`.
@@ -106,11 +115,17 @@ public isolated class Memory {
     public isolated function delete(string sessionId) returns ai:MemoryError? {
         [string, string] keys = check resolveSessionKey(self.sessionKeyConfig, sessionId);
         var [actorId, agentSessionId] = keys;
+        Error? result;
         if self.deleteMode == SOFT {
             decimal eventTimestamp = self.nextEventTimestamp();
-            return writeResetMarker(self.agentCoreClient, self.memoryId, actorId, agentSessionId, eventTimestamp);
+            result = writeResetMarker(self.agentCoreClient, self.memoryId, actorId, agentSessionId, eventTimestamp);
+        } else {
+            result = purgeSession(self.agentCoreClient, self.memoryId, actorId, agentSessionId);
         }
-        return purgeSession(self.agentCoreClient, self.memoryId, actorId, agentSessionId);
+        if result is Error {
+            logAgentCoreFailure("delete", sessionId, result);
+        }
+        return result;
     }
 
     # Releases the resources held by this memory's underlying `MemoryClient`.
