@@ -1,0 +1,13 @@
+[package]
+distribution = "2201.13.5"
+org = "dasunorg"
+name = "ai.aws.agentcore"
+version = "@toml.version@"
+license = ["Apache-2.0"]
+authors = ["dasunorg"]
+keywords = ["Type/Connector", "Vendor/Amazon", "Area/AI & Machine Learning", "Type/Short Term Memory Store", "Name/Amazon Bedrock AgentCore Memory"]
+repository = "https://github.com/SahanjithD/ballerina-ai-memory-for-bedrock-agentcore"
+icon = "icon.png"
+
+[build-options]
+observabilityIncluded = true

@@ -104,14 +104,50 @@ When an `ai:Agent` tool requires approval, the agent pauses and persists its sta
 
 Every failure from this package is an `agentcore:Error` (`distinct ai:MemoryError & error<aws:ErrorDetails>`), so it can be caught either as this package's own error type or as the generic `ai:MemoryError` that `ai:Memory` implementations are expected to return. `error<aws:ErrorDetails>` fields (`httpStatusCode`, `errorCode`, `requestId`, ...) are populated when the failure came back from AWS, and left unset for local failures (invalid configuration, credential resolution, request signing). Note that `ai:Agent` itself only logs `ai:Memory` failures at debug level rather than surfacing them to the caller - this package logs every AgentCore call failure at `WARN` (with the AWS request id, when available) so it is still visible to an operator.
 
-## Build from source
+## Build from the source
 
-```
-bal build
-bal test
-```
+The Ballerina package lives in [`ballerina/`](ballerina); the repository root holds the Gradle build and CI configuration around it. The tests run entirely against an in-process mock of the AgentCore API - no AWS account or network access is required. There is no live test suite in this repository yet.
 
-`bal test` runs entirely against an in-process mock of the AgentCore API - no AWS account or network access is required. There is no live test suite in this repository yet.
+### Setting up the prerequisites
+
+1. Download and install Java SE Development Kit (JDK) version 21, from either [Oracle JDK](https://www.oracle.com/java/technologies/downloads/) or [OpenJDK](https://adoptium.net/), and set the `JAVA_HOME` environment variable to its installation directory.
+
+2. Download and install [Ballerina Swan Lake](https://ballerina.io/).
+
+3. Export a GitHub personal access token with the `read:packages` permission, which the build uses to fetch the Ballerina Gradle plugin:
+
+    ```bash
+    export packageUser=<Username>
+    export packagePAT=<Personal access token>
+    ```
+
+### Build options
+
+1. To build the package:
+
+   ```bash
+   ./gradlew clean build
+   ```
+
+2. To run the tests:
+
+   ```bash
+   ./gradlew clean test
+   ```
+
+3. To build without the tests:
+
+   ```bash
+   ./gradlew clean build -x test
+   ```
+
+4. To publish the generated artifacts to the local Ballerina Central repository:
+
+   ```bash
+   ./gradlew clean build -PpublishToLocalCentral=true
+   ```
+
+To iterate on the package alone without Gradle, run `bal build` and `bal test` from inside `ballerina/`.
 
 ## Issues
 
