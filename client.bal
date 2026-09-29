@@ -25,6 +25,7 @@ import ballerinax/aws.auth;
 # control-plane API. `agentcore:Memory` and `agentcore:LongTermMemoryToolKit` are both built on
 # top of this; use it directly for lower-level access (e.g. branches, or memory records outside
 # what the toolkit exposes).
+@display {label: "Amazon Bedrock AgentCore Memory Client"}
 public isolated client class MemoryClient {
     private final http:Client dataPlaneHttp;
     private final string dataPlaneHost;
@@ -39,7 +40,7 @@ public isolated client class MemoryClient {
     # + config - The connection configuration
     # + return - An `Error` if the underlying HTTP clients or credential provider fail to
     # initialize
-    public isolated function init(ConnectionConfig config) returns Error? {
+    public isolated function init(@display {label: "Connection Configuration"} ConnectionConfig config) returns Error? {
         self.region = config.region;
         self.dataPlaneHost = aws:resolveEndpointHost(DATA_PLANE_SERVICE, config.region, config.endpointConfig);
         self.controlPlaneHost = aws:resolveEndpointHost(CONTROL_PLANE_SERVICE, config.region, config.endpointConfig);
@@ -86,8 +87,12 @@ public isolated client class MemoryClient {
     # + eventTimestamp - The timestamp to record for the event
     # + payload - The event's payload items (see `envelope.bal`)
     # + return - The created event, or an `Error`
-    remote isolated function createEvent(string memoryId, string actorId, string sessionId,
-            time:Utc eventTimestamp, json[] payload) returns WireEvent|Error {
+    @display {label: "Create Event"}
+    remote isolated function createEvent(@display {label: "Memory ID"} string memoryId,
+            @display {label: "Actor ID"} string actorId,
+            @display {label: "Session ID"} string sessionId,
+            @display {label: "Event Timestamp"} time:Utc eventTimestamp,
+            @display {label: "Payload"} json[] payload) returns WireEvent|Error {
         CreateEventRequest request = {
             actorId,
             sessionId,
@@ -114,8 +119,12 @@ public isolated client class MemoryClient {
     # + maxResults - The page size, 1-100
     # + nextToken - The pagination token from a previous page, if any
     # + return - The page of events plus an optional `nextToken`, or an `Error`
-    remote isolated function listEvents(string memoryId, string actorId, string sessionId, int maxResults,
-            string? nextToken = ()) returns ListEventsResponse|Error {
+    @display {label: "List Events"}
+    remote isolated function listEvents(@display {label: "Memory ID"} string memoryId,
+            @display {label: "Actor ID"} string actorId,
+            @display {label: "Session ID"} string sessionId,
+            @display {label: "Max Results"} int maxResults,
+            @display {label: "Next Token"} string? nextToken = ()) returns ListEventsResponse|Error {
         ListEventsRequest request = {maxResults, nextToken};
         json response = check self.sendSigned(self.dataPlaneHttp, self.dataPlaneHost, DATA_PLANE_SERVICE, "POST",
             listEventsPath(memoryId, actorId, sessionId), request.toJson());
@@ -133,8 +142,11 @@ public isolated client class MemoryClient {
     # + sessionId - The sanitized session id
     # + eventId - The event id to delete, in AWS's `<number>#<hex>` format
     # + return - The deleted event's id, or an `Error`
-    remote isolated function deleteEvent(string memoryId, string actorId, string sessionId, string eventId)
-            returns string|Error {
+    @display {label: "Delete Event"}
+    remote isolated function deleteEvent(@display {label: "Memory ID"} string memoryId,
+            @display {label: "Actor ID"} string actorId,
+            @display {label: "Session ID"} string sessionId,
+            @display {label: "Event ID"} string eventId) returns string|Error {
         string signerPath = deleteEventSignerPath(memoryId, actorId, sessionId, eventId);
         string httpPath = deleteEventHttpPath(memoryId, actorId, sessionId, eventId);
         json response = check self.sendSignedWithPaths(self.dataPlaneHttp, self.dataPlaneHost, DATA_PLANE_SERVICE,
@@ -154,8 +166,12 @@ public isolated client class MemoryClient {
     # + topK - The maximum number of results to return
     # + nextToken - The pagination token from a previous page, if any
     # + return - The matching memory record summaries plus an optional `nextToken`, or an `Error`
-    remote isolated function retrieveMemoryRecords(string memoryId, string namespace, string searchQuery, int topK,
-            string? nextToken = ()) returns RetrieveMemoryRecordsResponse|Error {
+    @display {label: "Retrieve Memory Records"}
+    remote isolated function retrieveMemoryRecords(@display {label: "Memory ID"} string memoryId,
+            @display {label: "Namespace"} string namespace,
+            @display {label: "Search Query"} string searchQuery,
+            @display {label: "Top K"} int topK,
+            @display {label: "Next Token"} string? nextToken = ()) returns RetrieveMemoryRecordsResponse|Error {
         RetrieveMemoryRecordsRequest request = {
             namespace,
             nextToken,
@@ -174,7 +190,8 @@ public isolated client class MemoryClient {
     #
     # + memoryId - The AgentCore Memory resource id
     # + return - The memory resource's `id` and `status`, or an `Error`
-    remote isolated function getMemory(string memoryId) returns ControlPlaneMemory|Error {
+    @display {label: "Get Memory"}
+    remote isolated function getMemory(@display {label: "Memory ID"} string memoryId) returns ControlPlaneMemory|Error {
         // The control plane's *endpoint* prefix is "bedrock-agentcore-control", but its SigV4
         // *signing* name is "bedrock-agentcore" - the same as the data plane (verified against
         // the service's own model: `endpointPrefix` and `signingName` differ only here). Signing

@@ -24,6 +24,7 @@ type SearchMemoryInput record {|
 # Exposes a single `searchMemory` tool the LLM can call explicitly, as an alternative to
 # unconditional recall injection into every turn (see `recall.bal`) - the LLM decides when a
 # lookup is worth the call.
+@display {label: "Amazon Bedrock AgentCore Long Term Memory Toolkit"}
 public isolated class LongTermMemoryToolKit {
     *ai:BaseToolKit;
 
@@ -41,7 +42,8 @@ public isolated class LongTermMemoryToolKit {
     # the full ARN (see `MemoryConfig.memoryId`'s documentation for why)
     # + config - The toolkit configuration
     # + return - An `Error` if the underlying client fails to initialize or `config` is invalid
-    public isolated function init(ConnectionConfig connectionConfig, string memoryId,
+    public isolated function init(@display {label: "Connection Configuration"} ConnectionConfig connectionConfig,
+            @display {label: "Memory ID"} string memoryId,
             *LongTermMemoryToolKitConfig config) returns Error? {
         if config.namespaces.length() == 0 {
             return error Error("LongTermMemoryToolKit requires at least one namespace.");
