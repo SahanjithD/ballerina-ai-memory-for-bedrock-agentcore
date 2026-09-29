@@ -17,7 +17,7 @@ import ballerina/ai;
 import ballerina/test;
 
 @test:Config
-function testBuildEventPayloadPutsBlobFirst() {
+function testBuildEventPayloadPutsBlobFirst() returns error? {
     json[] payload = buildEventPayload([
         {role: ai:SYSTEM, content: "You are helpful."},
         {role: ai:USER, content: "hi"},
@@ -27,7 +27,9 @@ function testBuildEventPayloadPutsBlobFirst() {
     test:assertEquals(payload.length(), 3);
     map<json> first = <map<json>>payload[0];
     test:assertTrue(first.hasKey("blob"));
-    map<json> blob = <map<json>>first["blob"];
+    // Written as JSON text: AgentCore does not round-trip an object blob (see `blobItem`).
+    test:assertTrue(first["blob"] is string);
+    map<json> blob = <map<json>>check (<string>first["blob"]).fromJsonString();
     test:assertEquals(blob["v"], ENVELOPE_VERSION);
     test:assertEquals(blob["reset"], false);
     test:assertEquals((<json[]>blob["messages"]).length(), 3);
@@ -50,7 +52,7 @@ function testConversationalItemsSkipSystemAndMapRoles() {
 }
 
 @test:Config
-function testEmptyConversationalTextIsDropped() {
+function testEmptyConversationalTextIsDropped() returns error? {
     json[] payload = buildEventPayload([
         {role: ai:USER, content: ""},
         {role: "function", name: "noop", content: ""},
@@ -61,7 +63,7 @@ function testEmptyConversationalTextIsDropped() {
     test:assertEquals(payload.length(), 2, "empty-text items must never reach the wire");
     test:assertEquals(conversationalTexts(payload), ["real"]);
     // The blob still carries all four messages losslessly.
-    map<json> blob = <map<json>>(<map<json>>payload[0])["blob"];
+    map<json> blob = <map<json>>check (<string>(<map<json>>payload[0])["blob"]).fromJsonString();
     test:assertEquals((<json[]>blob["messages"]).length(), 4);
 }
 
@@ -125,11 +127,14 @@ function testEnvelopeRoundTripsEveryMessageKind() returns error? {
 @test:Config
 function testForeignBlobIsSkippedRatherThanFailing() {
     json[][] foreign = [
-        [{"blob": {"framework": "strands", "messages": []}}],
-        [{"blob": {"v": ENVELOPE_VERSION + 1, "messages": []}}],
+        [blobItem({"framework": "strands", "messages": []})],
+        [blobItem({"v": ENVELOPE_VERSION + 1, "messages": []})],
+        // An object blob, and the non-JSON string AgentCore turns one into on read.
+        [{"blob": {"v": ENVELOPE_VERSION, "reset": false, "messages": []}}],
+        [{"blob": "{v=1, reset=false, messages=[]}"}],
         [{"conversational": {"content": {"text": "hi"}, "role": ROLE_USER}}],
         [{"blob": "a plain string blob"}],
-        [{"blob": {"v": "1", "messages": []}}],
+        [blobItem({"v": "1", "messages": []})],
         ["not even an object"],
         []
     ];
@@ -142,9 +147,9 @@ function testForeignBlobIsSkippedRatherThanFailing() {
 @test:Config
 function testBlobWithMatchingVersionButUndecodableShapeIsSkipped() {
     json[][] undecodable = [
-        [{"blob": {"v": ENVELOPE_VERSION, "messages": "not an array"}}],
-        [{"blob": {"v": ENVELOPE_VERSION}}],
-        [{"blob": {"v": ENVELOPE_VERSION, "messages": [{"role": "bogus"}]}}]
+        [blobItem({"v": ENVELOPE_VERSION, "messages": "not an array"})],
+        [blobItem({"v": ENVELOPE_VERSION})],
+        [blobItem({"v": ENVELOPE_VERSION, "messages": [{"role": "bogus"}]})]
     ];
     foreach json[] payload in undecodable {
         test:assertTrue(decodeEventPayload(payload) is ());
@@ -156,7 +161,7 @@ function testBlobWithMatchingVersionButUndecodableShapeIsSkipped() {
 function testBlobIsFoundBehindForeignItems() {
     json[] payload = [
         {"conversational": {"content": {"text": "hi"}, "role": ROLE_USER}},
-        {"blob": {"unrelated": true}},
+        blobItem({"unrelated": true}),
         ...buildEventPayload([{role: ai:USER, content: "found me"}])
     ];
     ai:ChatMessage[] decoded = <ai:ChatMessage[]>decodeEventPayload(payload);

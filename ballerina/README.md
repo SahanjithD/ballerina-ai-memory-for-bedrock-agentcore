@@ -111,7 +111,7 @@ Each `ai:Memory.update` call - one per completed agent turn - is written as a si
 
 | Item | Purpose |
 |---|---|
-| One `blob` item | A lossless JSON envelope of every message in the turn (including the system and user messages, tool calls, and tool results). This is the only thing `get` reads back - it is what makes replay exact. |
+| One `blob` item | A lossless JSON envelope of every message in the turn (including the system and user messages, tool calls, and tool results), written as JSON text: AgentCore does not read an object blob back as JSON. This is the only thing `get` reads back - it is what makes replay exact. |
 | Zero or more `conversational` items | Plain-text renderings of the turn's user/assistant/tool-result content, for AgentCore's own extraction strategies (summarization, semantic facts, etc.) to work on. Never read back by this module. |
 
 `get` calls `ListEvents` (AWS documents no ordering guarantee for it, so results are always sorted client-side by timestamp), decodes every event's blob, and folds them into one message list - keeping only the most recently written system message, since `ai:Agent` resends the same system message on every turn. Events whose blob isn't one this module's version recognizes (a different writer sharing the memory resource, or an incompatible envelope version) are skipped rather than failing the whole read.

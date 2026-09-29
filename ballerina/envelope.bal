@@ -46,7 +46,7 @@ type EnvelopeBlob record {
 isolated function buildEventPayload(ai:ChatMessage[] messages) returns json[] {
     DatabaseMessage[] stored = from ai:ChatMessage message in messages select toDatabaseMessage(message);
     EnvelopeBlob blob = {messages: stored};
-    json[] payload = [{blob: blob.toJson()}];
+    json[] payload = [blobItem(blob.toJson())];
     payload.push(...conversationalItems(messages));
     return payload;
 }
@@ -57,7 +57,26 @@ isolated function buildEventPayload(ai:ChatMessage[] messages) returns json[] {
 # + return - The single-item payload array for the reset marker event
 isolated function buildResetMarkerPayload() returns json[] {
     EnvelopeBlob blob = {reset: true, messages: []};
-    return [{blob: blob.toJson()}];
+    return [blobItem(blob.toJson())];
+}
+
+// AgentCore accepts a JSON object as a `blob`, but reads it back as a Java `Map.toString()` string
+// (`{v=1, messages=[...]}`) that is no longer JSON. A JSON string round-trips byte for byte, so
+// the blob is always written as JSON text and parsed on read.
+isolated function blobItem(json document) returns json => {blob: document.toJsonString()};
+
+// Returns the parsed document of a payload item's `blob`, or `()` if the item has no blob or its
+// blob is not a JSON object encoded as a string.
+isolated function blobDocument(json item) returns map<json>? {
+    if item !is map<json> {
+        return ();
+    }
+    json? blob = item["blob"];
+    if blob !is string {
+        return ();
+    }
+    json|error document = blob.fromJsonString();
+    return document is map<json> ? document : ();
 }
 
 isolated function conversationalItems(ai:ChatMessage[] messages) returns json[] {
@@ -153,11 +172,8 @@ isolated function isResetMarker(json[] payload) returns boolean {
 // failing `get` for the whole session over one foreign or forward-incompatible event.
 isolated function findBlob(json[] payload) returns EnvelopeBlob? {
     foreach json item in payload {
-        if item !is map<json> {
-            continue;
-        }
-        json? blobJson = item["blob"];
-        if blobJson !is map<json> {
+        map<json>? blobJson = blobDocument(item);
+        if blobJson is () {
             continue;
         }
         json? versionField = blobJson["v"];

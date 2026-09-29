@@ -31,7 +31,8 @@ function testCreateEventReturnsAnAwsShapedEventId() returns error? {
     test:assertEquals(event.actorId, "user-42");
     test:assertEquals(event.sessionId, "chat-1");
     test:assertEquals(event.memoryId, MOCK_MEMORY_ID);
-    test:assertEquals(event.payload.length(), 2);
+    // AWS does not echo the payload back; decoding must not depend on it.
+    test:assertEquals(event.payload.length(), 0);
 }
 
 @test:Config

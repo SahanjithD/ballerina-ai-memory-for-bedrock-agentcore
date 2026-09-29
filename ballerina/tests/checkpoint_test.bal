@@ -183,7 +183,7 @@ function testForeignEventsInTheCheckpointSessionAreIgnored() returns error? {
     resetMock();
     Memory memory = check new (mockMemoryConfig({actorId: "user-42"}));
     string checkpointSession = checkpointSessionId(sanitizeSessionId("chat-foreign-ckpt"));
-    injectForeignEvent("user-42", checkpointSession, [{"blob": {"v": ENVELOPE_VERSION, "kind": "something-else"}}], 5d);
+    injectForeignEvent("user-42", checkpointSession, [blobItem({"v": ENVELOPE_VERSION, "kind": "something-else"})], 5d);
 
     test:assertEquals(check memory.getCheckpoint("chat-foreign-ckpt"), ());
     test:assertEquals(check memory.takeCheckpoint("chat-foreign-ckpt"), ());

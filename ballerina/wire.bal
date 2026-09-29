@@ -38,7 +38,8 @@ type WireEvent record {
     decimal eventTimestamp;
     string memoryId;
     map<json> metadata?;
-    json[] payload;
+    // `CreateEvent`'s response leaves the payload out, so it can be missing.
+    json[] payload = [];
     string sessionId;
 };
 

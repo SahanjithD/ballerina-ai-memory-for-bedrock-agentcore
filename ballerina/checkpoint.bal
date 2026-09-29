@@ -118,18 +118,15 @@ isolated function fromStoredOutput(ai:ChatAssistantMessage|ai:ChatFunctionMessag
 
 isolated function buildCheckpointPayload(ai:PendingApproval approval) returns json[] {
     CheckpointBlob blob = {approval: toStoredApproval(approval)};
-    return [{blob: blob.toJson()}];
+    return [blobItem(blob.toJson())];
 }
 
 // Mirrors `findBlob`'s tolerance: a blob that is not recognizably this build's checkpoint (another
 // writer, or a different envelope version) is skipped, never treated as fatal.
 isolated function decodeCheckpoint(json[] payload) returns ai:PendingApproval? {
     foreach json item in payload {
-        if item !is map<json> {
-            continue;
-        }
-        json? blobJson = item["blob"];
-        if blobJson !is map<json> || blobJson["v"] != ENVELOPE_VERSION || blobJson["kind"] != CHECKPOINT_KIND {
+        map<json>? blobJson = blobDocument(item);
+        if blobJson is () || blobJson["v"] != ENVELOPE_VERSION || blobJson["kind"] != CHECKPOINT_KIND {
             continue;
         }
         CheckpointBlob|error blob = blobJson.fromJsonWithType();

@@ -125,10 +125,13 @@ service / on new http:Listener(mockPort) {
             actorId: <string>body["actorId"],
             sessionId: <string>body["sessionId"],
             eventTimestamp: <decimal>check (<json>body["eventTimestamp"]).cloneWithType(),
-            payload
+            payload: storedLikeAws(payload)
         };
         storeMockEvent(memoryId, event);
-        return {"event": wireEventJson(memoryId, event)};
+        // Like AWS, the created event is echoed back without its payload.
+        map<json> created = <map<json>>wireEventJson(memoryId, event);
+        _ = created.remove("payload");
+        return {"event": created};
     }
 
     resource function post memories/[string memoryId]/actor/[string actorId]/sessions/[string sessionId](
@@ -273,6 +276,14 @@ isolated function nextMockEventId() returns string {
 
 isolated function sessionStoreKey(string memoryId, string actorId, string sessionId) returns string =>
     string `${memoryId}|${actorId}|${sessionId}`;
+
+// AgentCore reads an object `blob` back as a Java `Map.toString()` string, which is not JSON; the
+// mock mangles one the same way so a client writing object blobs fails here as it does on AWS.
+isolated function storedLikeAws(json[] payload) returns json[] =>
+    from json item in payload
+    select item is map<json> && item["blob"] is map<json>
+        ? {"blob": re `"`.replaceAll((<map<json>>item["blob"]).toString(), "")}
+        : item;
 
 isolated function storeMockEvent(string memoryId, MockEvent event) {
     string key = sessionStoreKey(memoryId, event.actorId, event.sessionId);

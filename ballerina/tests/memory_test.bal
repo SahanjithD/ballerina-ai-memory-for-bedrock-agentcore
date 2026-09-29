@@ -157,11 +157,11 @@ function testForeignEventsAreSkippedWithoutFailingTheGet() returns error? {
     check memory.update("chat-foreign", [<ai:ChatUserMessage>{role: ai:USER, content: "ours"}]);
 
     // Events another SDK (or a future build of this module) wrote into the same memory resource.
-    injectForeignEvent("user-42", "chat-foreign", [{"blob": {"framework": "strands", "messages": []}}], 2d);
-    injectForeignEvent("user-42", "chat-foreign", [{"blob": {"v": ENVELOPE_VERSION + 1, "messages": []}}], 3d);
+    injectForeignEvent("user-42", "chat-foreign", [blobItem({"framework": "strands", "messages": []})], 2d);
+    injectForeignEvent("user-42", "chat-foreign", [blobItem({"v": ENVELOPE_VERSION + 1, "messages": []})], 3d);
     injectForeignEvent("user-42", "chat-foreign",
             [{"conversational": {"content": {"text": "theirs"}, "role": ROLE_USER}}], 4d);
-    injectForeignEvent("user-42", "chat-foreign", [{"blob": {"v": ENVELOPE_VERSION, "messages": "broken"}}], 5d);
+    injectForeignEvent("user-42", "chat-foreign", [blobItem({"v": ENVELOPE_VERSION, "messages": "broken"})], 5d);
 
     ai:ChatMessage[] messages = check memory.get("chat-foreign");
     test:assertEquals(messages.length(), 1);
