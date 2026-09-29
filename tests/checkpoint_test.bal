@@ -60,7 +60,6 @@ function testGetCheckpointWithNonePendingIsNil() returns error? {
     resetMock();
     Memory memory = check new (mockMemoryConfig({actorId: "user-42"}));
     test:assertEquals(check memory.getCheckpoint("chat-none"), ());
-    check memory.close();
 }
 
 @test:Config
@@ -78,7 +77,6 @@ function testPutThenGetCheckpointRoundTrips() returns error? {
     ai:ChatAssistantMessage|ai:ChatFunctionMessage|ai:Error output = (<ai:PendingApproval>stored).iterations[0].output[0];
     test:assertTrue(output is ai:Error);
     test:assertEquals((<ai:Error>output).message(), "model returned malformed JSON");
-    check memory.close();
 }
 
 @test:Config
@@ -93,7 +91,6 @@ function testCheckpointsStayOutOfTheConversationSession() returns error? {
     test:assertEquals(checkpointEvents("user-42", "chat-split").length(), 1);
     ai:ChatMessage[] messages = check memory.get("chat-split");
     test:assertEquals(messages.length(), 1, "a checkpoint must never surface as history");
-    check memory.close();
 }
 
 @test:Config
@@ -106,7 +103,6 @@ function testPutCheckpointReplacesThePreviousOne() returns error? {
 
     test:assertEquals(checkpointEvents("user-42", "chat-replace").length(), 1, "the older checkpoint must be removed");
     test:assertEquals((<ai:PendingApproval>check memory.getCheckpoint("chat-replace")).executionId, "exec-new");
-    check memory.close();
 }
 
 @test:Config
@@ -120,7 +116,6 @@ function testTakeCheckpointClaimsItOnce() returns error? {
     test:assertEquals(check memory.takeCheckpoint("chat-take"), (), "a claimed checkpoint cannot be claimed again");
     test:assertEquals(check memory.getCheckpoint("chat-take"), ());
     test:assertEquals(checkpointEvents("user-42", "chat-take").length(), 0);
-    check memory.close();
 }
 
 @test:Config
@@ -133,7 +128,6 @@ function testTakeCheckpointLosingTheRaceReturnsNil() returns error? {
     // sees 404, and we must report "nothing to claim" rather than an error or the approval.
     setMockFailures(1, 404, "ResourceNotFoundException", "DeleteEvent");
     test:assertEquals(check memory.takeCheckpoint("chat-race"), ());
-    check memory.close();
 }
 
 @test:Config
@@ -148,7 +142,6 @@ function testTakeCheckpointAlsoClearsStaleOlderCheckpoints() returns error? {
     ai:PendingApproval? taken = check memory.takeCheckpoint("chat-stale");
     test:assertEquals((<ai:PendingApproval>taken).executionId, "exec-b", "the latest checkpoint wins");
     test:assertEquals(check memory.getCheckpoint("chat-stale"), (), "the stale one must not resurface");
-    check memory.close();
 }
 
 @test:Config
@@ -160,7 +153,6 @@ function testRemoveCheckpointClearsIt() returns error? {
     check memory.removeCheckpoint("chat-remove");
     test:assertEquals(check memory.getCheckpoint("chat-remove"), ());
     check memory.removeCheckpoint("chat-remove");
-    check memory.close();
 }
 
 @test:Config
@@ -173,7 +165,6 @@ function testDeleteAlsoClearsThePendingCheckpoint() returns error? {
     check memory.delete("chat-abandon");
     test:assertEquals(check memory.getCheckpoint("chat-abandon"), (), "an abandoned pause must not outlive its session");
     test:assertEquals((check memory.get("chat-abandon")).length(), 0);
-    check memory.close();
 }
 
 @test:Config
@@ -185,7 +176,6 @@ function testCheckpointsAreScopedPerSession() returns error? {
     test:assertEquals(check memory.getCheckpoint("user-2/chat-1"), (), "another actor's session must not see it");
     test:assertEquals(check memory.getCheckpoint("user-1/chat-2"), (), "another session must not see it");
     test:assertEquals((<ai:PendingApproval>check memory.getCheckpoint("user-1/chat-1")).executionId, "exec-1");
-    check memory.close();
 }
 
 @test:Config
@@ -197,7 +187,6 @@ function testForeignEventsInTheCheckpointSessionAreIgnored() returns error? {
 
     test:assertEquals(check memory.getCheckpoint("chat-foreign-ckpt"), ());
     test:assertEquals(check memory.takeCheckpoint("chat-foreign-ckpt"), ());
-    check memory.close();
 }
 
 @test:Config
@@ -211,7 +200,6 @@ function testReservedCheckpointSessionKeysAreRejected() returns error? {
     test:assertTrue(memory.getCheckpoint(reserved) is Error);
     test:assertEquals(mockCallCount("CreateEvent") + mockCallCount("ListEvents"), 0,
             "a reserved key must not reach AWS");
-    check memory.close();
 }
 
 @test:Config
@@ -221,19 +209,5 @@ function testCheckpointFailuresSurfaceAsErrors() returns error? {
     setMockFailures(MAX_RETRY_ATTEMPTS + 1, 403, "AccessDeniedException");
 
     test:assertTrue(memory.putCheckpoint(sampleApproval("chat-denied-ckpt")) is Error);
-    check memory.close();
 }
 
-@test:Config
-function testRecallWrapperDelegatesCheckpoints() returns error? {
-    resetMock();
-    Memory memory = check new (mockMemoryConfig({actorId: "user-42"}));
-    RecallAugmentedMemory recall = check new (memory, mockConnectionConfig(), MOCK_MEMORY_ID, namespaces = ["/facts"]);
-
-    check recall.putCheckpoint(sampleApproval("chat-recall-ckpt"));
-    test:assertEquals(checkpointEvents("user-42", "chat-recall-ckpt").length(), 1);
-    test:assertTrue((check recall.takeCheckpoint("chat-recall-ckpt")) is ai:PendingApproval);
-    test:assertEquals(check recall.getCheckpoint("chat-recall-ckpt"), ());
-    check recall.close();
-    check memory.close();
-}

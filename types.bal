@@ -61,9 +61,9 @@ public type CompositeSessionKeyConfig record {|
     string separator = "/";
 |};
 
-# Configuration for `MemoryClient` and `agentcore:Memory`.
-@display {label: "Connection Configuration"}
-public type ConnectionConfig record {|
+# Configuration for `agentcore:Memory`.
+@display {label: "Memory Configuration"}
+public type MemoryConfig record {|
     # The AWS region hosting the AgentCore Memory resource.
     @display {label: "Region"}
     aws:Region|string region;
@@ -77,12 +77,6 @@ public type ConnectionConfig record {|
     # `verifyMemory` is used) control-plane endpoints.
     @display {label: "HTTP Client Configuration"}
     http:ClientConfiguration httpConfig = {};
-|};
-
-# Configuration for `agentcore:Memory`.
-@display {label: "Memory Configuration"}
-public type MemoryConfig record {|
-    *ConnectionConfig;
     # The identifier of the AgentCore Memory resource to read from and write to - the plain id
     # (e.g. `my-memory-ab12cd34ef`), not the full ARN. This module interpolates `memoryId` directly
     # into both the signed request path and the HTTP request path without URL-encoding it, and the
@@ -109,49 +103,4 @@ public type MemoryConfig record {|
     # AWS's pricing model, an unbounded per-call cost.
     @display {label: "Max Events Per Get"}
     int maxEventsPerGet = 100;
-|};
-
-# Configuration for `LongTermMemoryToolKit`.
-@display {label: "Long Term Memory Toolkit Configuration"}
-public type LongTermMemoryToolKitConfig record {|
-    # The namespace templates to search. Each entry is resolved against `namespaceVariables`
-    # (literal `*` segments are passed through as wildcards) before being sent as AgentCore's
-    # `namespace` search parameter. The toolkit issues one `RetrieveMemoryRecords` page per
-    # namespace and merges/re-sorts the results client-side.
-    @display {label: "Namespaces"}
-    string[] namespaces;
-    # Static substitutions for `{variable}` placeholders in `namespaces`, e.g.
-    # `{"actorId": "user-42"}` for a template `"/facts/{actorId}"`.
-    @display {label: "Namespace Variables"}
-    map<string> namespaceVariables = {};
-    # The maximum number of memory records returned by the tool per call, after merging results
-    # from every configured namespace. Defaults to 10.
-    @display {label: "Top K"}
-    int topK = 10;
-    # The tool's name, as exposed to the LLM. Defaults to `"search_long_term_memory"`.
-    @display {label: "Tool Name"}
-    string toolName = "search_long_term_memory";
-    # The tool's description, as exposed to the LLM.
-    @display {label: "Tool Description"}
-    string toolDescription = "Searches long-term memory for facts, preferences, or prior context relevant to a query.";
-|};
-
-# A single long-term memory record returned by `LongTermMemoryToolKit`'s search tool.
-@display {label: "Memory Record Match"}
-public type MemoryRecordMatch record {|
-    # The text content of the memory record.
-    @display {label: "Text"}
-    string text;
-    # The relevance score assigned by AgentCore's semantic search, if the search was scored.
-    @display {label: "Score"}
-    float? score;
-    # Every namespace this record was filed under.
-    @display {label: "Namespaces"}
-    string[] namespaces;
-    # A human-readable label for the record, derived from its most specific namespace.
-    @display {label: "Label"}
-    string label;
-    # When the record was created.
-    @display {label: "Created At"}
-    string createdAt;
 |};

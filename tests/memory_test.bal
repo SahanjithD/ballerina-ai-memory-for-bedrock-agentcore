@@ -23,7 +23,6 @@ function testGetOnAnUnknownSessionIsEmpty() returns error? {
 
     test:assertEquals((check memory.get("brand-new")).length(), 0);
     test:assertEquals(mockCallCount("ListEvents"), 1, "a plain get must issue exactly one ListEvents");
-    check memory.close();
 }
 
 @test:Config
@@ -39,7 +38,6 @@ function testUpdateThenGetRoundTripsOneTurn() returns error? {
     check memory.update("chat-round-trip", turn);
     test:assertEquals(asJson(check memory.get("chat-round-trip")), asJson(turn));
     test:assertEquals(mockCallCount("CreateEvent"), 1, "one turn must be one event");
-    check memory.close();
 }
 
 @test:Config
@@ -51,7 +49,6 @@ function testUpdateAcceptsASingleMessage() returns error? {
     ai:ChatMessage[] messages = check memory.get("chat-single");
     test:assertEquals(messages.length(), 1);
     test:assertEquals(userContent(messages[0]), "just me");
-    check memory.close();
 }
 
 @test:Config
@@ -61,7 +58,6 @@ function testUpdateWithNoMessagesWritesNothing() returns error? {
 
     check memory.update("chat-empty", []);
     test:assertEquals(mockCallCount("CreateEvent"), 0);
-    check memory.close();
 }
 
 @test:Config
@@ -90,7 +86,6 @@ function testFoldingKeepsOnlyTheLastSystemMessage() returns error? {
         {role: ai:USER, content: "two"},
         {role: ai:ASSISTANT, content: "second"}
     ]));
-    check memory.close();
 }
 
 @test:Config
@@ -107,7 +102,6 @@ function testToolCallTurnsRoundTrip() returns error? {
 
     check memory.update("chat-tools", turn);
     test:assertEquals(asJson(check memory.get("chat-tools")), asJson(turn));
-    check memory.close();
 }
 
 @test:Config
@@ -124,7 +118,6 @@ function testEmptyToolResultsSurviveTheRoundTrip() returns error? {
 
     check memory.update("chat-empty-tool", turn);
     test:assertEquals(asJson(check memory.get("chat-empty-tool")), asJson(turn));
-    check memory.close();
 }
 
 @test:Config
@@ -140,7 +133,6 @@ function testOversizedToolResultsSurviveTheRoundTrip() returns error? {
     check memory.update("chat-huge-tool", turn);
     ai:ChatMessage[] messages = check memory.get("chat-huge-tool");
     test:assertEquals((<ai:ChatFunctionMessage>messages[1]).content, huge);
-    check memory.close();
 }
 
 @test:Config
@@ -156,7 +148,6 @@ function testEventsAreSortedChronologicallyRegardlessOfServerOrder() returns err
     ai:ChatMessage[] messages = check memory.get("chat-order");
     test:assertEquals(from ai:ChatMessage message in messages select userContent(message),
             ["m0", "m1", "m2", "m3", "m4"]);
-    check memory.close();
 }
 
 @test:Config
@@ -175,7 +166,6 @@ function testForeignEventsAreSkippedWithoutFailingTheGet() returns error? {
     ai:ChatMessage[] messages = check memory.get("chat-foreign");
     test:assertEquals(messages.length(), 1);
     test:assertEquals(userContent(messages[0]), "ours");
-    check memory.close();
 }
 
 @test:Config
@@ -194,7 +184,6 @@ function testSoftDeleteHidesHistoryWithoutRemovingEvents() returns error? {
     ai:ChatMessage[] messages = check memory.get("chat-soft");
     test:assertEquals(messages.length(), 1);
     test:assertEquals(userContent(messages[0]), "after");
-    check memory.close();
 }
 
 @test:Config
@@ -211,7 +200,6 @@ function testOnlyTheLastResetMarkerCounts() returns error? {
     ai:ChatMessage[] messages = check memory.get("chat-two-resets");
     test:assertEquals(messages.length(), 1);
     test:assertEquals(userContent(messages[0]), "third");
-    check memory.close();
 }
 
 @test:Config
@@ -230,7 +218,6 @@ function testPhysicalPurgeKeepsTheResetMarker() returns error? {
     test:assertTrue(isResetMarker(remaining[0].payload), "the surviving event must be the reset marker");
     test:assertEquals(mockCallCount("DeleteEvent"), 2, "only the two prior events are deleted");
     test:assertEquals((check memory.get("chat-purge")).length(), 0);
-    check memory.close();
 }
 
 @test:Config
@@ -241,7 +228,6 @@ function testPhysicalPurgeOfAnEmptySessionStillWritesAMarker() returns error? {
     check memory.delete("chat-purge-empty");
     test:assertEquals(mockCallCount("DeleteEvent"), 0);
     test:assertEquals(storedMockEvents("user-42", "chat-purge-empty").length(), 1);
-    check memory.close();
 }
 
 @test:Config
@@ -255,7 +241,6 @@ function testPhysicalPurgeLeavesOtherSessionsAlone() returns error? {
 
     test:assertEquals(storedMockEvents("user-42", "chat-keep").length(), 1);
     test:assertEquals(userContent((check memory.get("chat-keep"))[0]), "keep me");
-    check memory.close();
 }
 
 @test:Config
@@ -274,7 +259,6 @@ function testUnsafeSessionKeysStayConsistentAcrossWriteReadAndDelete() returns e
     check memory.delete("room:42");
     test:assertEquals(mockCallCount("DeleteEvent"), 1, "the delete path must find the same hashed session");
     test:assertEquals((check memory.get("room:42")).length(), 0);
-    check memory.close();
 }
 
 @test:Config
@@ -289,7 +273,6 @@ function testCompositeSessionKeysSplitIntoActorAndSession() returns error? {
     check memory.update("user-8/chat-9", [<ai:ChatUserMessage>{role: ai:USER, content: "other"}]);
     test:assertEquals(userContent((check memory.get("user-7/chat-9"))[0]), "hello");
     test:assertEquals(userContent((check memory.get("user-8/chat-9"))[0]), "other");
-    check memory.close();
 }
 
 @test:Config
@@ -302,7 +285,6 @@ function testInvalidCompositeKeyFailsWithAMemoryError() returns error? {
     test:assertTrue(memory.update("no-separator", [<ai:ChatUserMessage>{role: ai:USER, content: "x"}]) is ai:MemoryError);
     test:assertTrue(memory.delete("no-separator") is ai:MemoryError);
     test:assertEquals(mockCallCount("CreateEvent"), 0, "an unresolvable key must not reach AWS");
-    check memory.close();
 }
 
 @test:Config
@@ -326,7 +308,6 @@ function testMaxEventsPerGetIsPassedToListEvents() returns error? {
     int callsBefore = mockCallCount("ListEvents");
     test:assertEquals((check memory.get("chat-cap")).length(), 3);
     test:assertEquals(mockCallCount("ListEvents"), callsBefore + 1);
-    check memory.close();
 }
 
 @test:Config
@@ -342,7 +323,6 @@ function testGetDoesNotFollowAContinuationToken() returns error? {
     int callsBefore = mockCallCount("ListEvents");
     test:assertEquals((check memory.get("chat-notoken")).length(), 2);
     test:assertEquals(mockCallCount("ListEvents"), callsBefore + 1);
-    check memory.close();
 }
 
 @test:Config
@@ -361,7 +341,6 @@ function testAPlainTurnCostsOneListAndOneCreate() returns error? {
     test:assertEquals(mockCallCount("CreateEvent"), 1);
     test:assertEquals(mockCallCount("DeleteEvent"), 0);
     test:assertEquals(mockCallCount("GetMemory"), 0);
-    check memory.close();
 }
 
 @test:Config
@@ -379,7 +358,6 @@ function testPurgeRelistsFromScratchInsteadOfPaging() returns error? {
     foreach json body in mockListEventsBodies() {
         test:assertFalse((<map<json>>body).hasKey("nextToken"), "a purge must never page with a token");
     }
-    check memory.close();
 }
 
 @test:Config
@@ -388,9 +366,8 @@ function testVerifyMemoryAcceptsAnActiveResource() returns error? {
     MemoryConfig config = mockMemoryConfig({actorId: "user-42"});
     config.verifyMemory = true;
 
-    Memory memory = check new (config);
+    _ = check new Memory(config);
     test:assertEquals(mockCallCount("GetMemory"), 1);
-    check memory.close();
 }
 
 @test:Config
@@ -420,9 +397,8 @@ function testVerifyMemorySurfacesAControlPlaneFailure() {
 @test:Config
 function testVerifyMemoryIsSkippedByDefault() returns error? {
     resetMock();
-    Memory memory = check new (mockMemoryConfig({actorId: "user-42"}));
+    _ = check new Memory(mockMemoryConfig({actorId: "user-42"}));
     test:assertEquals(mockCallCount("GetMemory"), 0, "init must not need control-plane access by default");
-    check memory.close();
 }
 
 @test:Config
@@ -434,7 +410,6 @@ function testUpdateFailuresAreSurfacedAsMemoryErrors() returns error? {
     ai:MemoryError? result = memory.update("chat-denied", [<ai:ChatUserMessage>{role: ai:USER, content: "x"}]);
     test:assertTrue(result is ai:MemoryError);
     test:assertEquals(mockCallCount("CreateEvent"), 1, "403 is not retryable");
-    check memory.close();
 }
 
 @test:Config
@@ -452,5 +427,4 @@ function testEventTimestampsAreStrictlyIncreasing() returns error? {
         test:assertTrue(event.eventTimestamp > previous, "event timestamps must strictly increase");
         previous = event.eventTimestamp;
     }
-    check memory.close();
 }

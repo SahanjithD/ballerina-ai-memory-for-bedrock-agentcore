@@ -38,7 +38,8 @@ final auth:StaticAuthConfig & readonly MOCK_CREDENTIALS = {
 isolated function mockConnectionConfig() returns ConnectionConfig => {
     region: MOCK_REGION,
     auth: MOCK_CREDENTIALS,
-    endpointConfig: {customEndpoint: string `http://localhost:${mockPort}`}
+    endpointConfig: {customEndpoint: string `http://localhost:${mockPort}`},
+    httpConfig: {}
 };
 
 isolated function mockMemoryConfig(SessionKeyConfig sessionKeyConfig, DeleteMode deleteMode = SOFT,
@@ -72,10 +73,7 @@ type MockState record {|
     map<int> callCounts = {};
     map<string> authHeaders = {};
     string[] deleteRawPaths = [];
-    map<json> recordsByNamespace = {};
     json[] listEventsBodies = [];
-    string[] retrieveNamespaces = [];
-    json[] retrieveBodies = [];
     string memoryStatus = "ACTIVE";
     int failuresRemaining = 0;
     int failureStatus = 429;
@@ -146,23 +144,6 @@ service / on new http:Listener(mockPort) {
         return {"eventId": eventId};
     }
 
-    resource function post memories/[string memoryId]/retrieve(http:Request request)
-            returns json|http:Response|error {
-        recordCall("RetrieveMemoryRecords", request);
-        http:Response? failure = preflightFailure("RetrieveMemoryRecords", request);
-        if failure is http:Response {
-            return failure;
-        }
-        map<json> body = <map<json>>check request.getJsonPayload();
-        json? searchCriteria = body["searchCriteria"];
-        if searchCriteria !is map<json> || searchCriteria["searchQuery"] !is string {
-            return validationFailure("searchCriteria.searchQuery is required");
-        }
-        string namespace = body["namespace"] is string ? <string>body["namespace"] : "";
-        recordRetrieve(namespace, body);
-        return {"memoryRecordSummaries": recordsFor(namespace)};
-    }
-
     resource function get memories/[string memoryId]/details(http:Request request) returns json|http:Response {
         recordCall("GetMemory", request);
         http:Response? failure = preflightFailure("GetMemory", request);
@@ -226,19 +207,6 @@ isolated function recordDeleteRawPath(string rawPath) {
 isolated function recordListEvents(map<json> body) {
     lock {
         mockState.listEventsBodies.push(body.clone());
-    }
-}
-
-isolated function recordRetrieve(string namespace, map<json> body) {
-    lock {
-        mockState.retrieveNamespaces.push(namespace);
-        mockState.retrieveBodies.push(body.clone());
-    }
-}
-
-isolated function recordsFor(string namespace) returns json {
-    lock {
-        return (mockState.recordsByNamespace[namespace] ?: <json[]>[]).clone();
     }
 }
 
@@ -349,10 +317,7 @@ isolated function resetMock() {
         mockState.callCounts = {};
         mockState.authHeaders = {};
         mockState.deleteRawPaths = [];
-        mockState.recordsByNamespace = {};
         mockState.listEventsBodies = [];
-        mockState.retrieveNamespaces = [];
-        mockState.retrieveBodies = [];
         mockState.memoryStatus = "ACTIVE";
         mockState.failuresRemaining = 0;
         mockState.failureOperation = "";
@@ -380,12 +345,6 @@ isolated function setMockFailures(int count, int status, string errorType, strin
     }
 }
 
-isolated function setMockRecords(map<json> recordsByNamespace) {
-    lock {
-        mockState.recordsByNamespace = recordsByNamespace.clone();
-    }
-}
-
 isolated function mockCallCount(string operation) returns int {
     lock {
         return mockState.callCounts[operation] ?: 0;
@@ -407,18 +366,6 @@ isolated function mockDeletePaths() returns string[] {
 isolated function mockListEventsBodies() returns json[] {
     lock {
         return mockState.listEventsBodies.clone();
-    }
-}
-
-isolated function mockRetrievedNamespaces() returns string[] {
-    lock {
-        return mockState.retrieveNamespaces.clone();
-    }
-}
-
-isolated function mockRetrievedBodies() returns json[] {
-    lock {
-        return mockState.retrieveBodies.clone();
     }
 }
 

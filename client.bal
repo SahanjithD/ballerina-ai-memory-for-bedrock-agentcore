@@ -20,27 +20,24 @@ import ballerina/uuid;
 import ballerinax/aws;
 import ballerinax/aws.auth;
 
-# A low-level typed client for the Bedrock AgentCore Memory data-plane API
-# (`CreateEvent`/`ListEvents`/`DeleteEvent`/`RetrieveMemoryRecords`), and, for `getMemory`, the
-# control-plane API. `agentcore:Memory` and `agentcore:LongTermMemoryToolKit` are both built on
-# top of this; use it directly for lower-level access (e.g. branches, or memory records outside
-# what the toolkit exposes).
-@display {label: "Amazon Bedrock AgentCore Memory Client"}
-public isolated client class MemoryClient {
+type ConnectionConfig record {|
+    aws:Region|string region;
+    auth:AuthConfig|auth:CredentialProvider auth;
+    aws:EndpointConfig endpointConfig;
+    http:ClientConfiguration httpConfig;
+|};
+
+// The signed HTTP transport `agentcore:Memory` is built on: the AgentCore Memory data-plane API
+// (`CreateEvent`/`ListEvents`/`DeleteEvent`) and, for `getMemory`, the control-plane API.
+isolated client class MemoryClient {
     private final http:Client dataPlaneHttp;
     private final string dataPlaneHost;
     private final http:Client controlPlaneHttp;
     private final string controlPlaneHost;
     private final auth:CredentialProvider credentialProvider;
-    private final boolean ownsCredentialProvider;
     private final aws:Region|string region;
 
-    # Initializes the client.
-    #
-    # + config - The connection configuration
-    # + return - An `Error` if the underlying HTTP clients or credential provider fail to
-    # initialize
-    public isolated function init(@display {label: "Connection Configuration"} ConnectionConfig config) returns Error? {
+    isolated function init(ConnectionConfig config) returns Error? {
         self.region = config.region;
         self.dataPlaneHost = aws:resolveEndpointHost(DATA_PLANE_SERVICE, config.region, config.endpointConfig);
         self.controlPlaneHost = aws:resolveEndpointHost(CONTROL_PLANE_SERVICE, config.region, config.endpointConfig);
@@ -67,7 +64,6 @@ public isolated client class MemoryClient {
         auth:AuthConfig|auth:CredentialProvider authConfig = config.auth;
         if authConfig is auth:CredentialProvider {
             self.credentialProvider = authConfig;
-            self.ownsCredentialProvider = false;
         } else {
             auth:CredentialProvider|auth:CredentialResolutionError credentialProvider = new (authConfig);
             if credentialProvider is auth:CredentialResolutionError {
@@ -75,24 +71,11 @@ public isolated client class MemoryClient {
                     credentialProvider.message(), credentialProvider);
             }
             self.credentialProvider = credentialProvider;
-            self.ownsCredentialProvider = true;
         }
     }
 
-    # Creates one event, carrying the given payload items, for a session.
-    #
-    # + memoryId - The AgentCore Memory resource id
-    # + actorId - The sanitized actor id
-    # + sessionId - The sanitized session id
-    # + eventTimestamp - The timestamp to record for the event
-    # + payload - The event's payload items (see `envelope.bal`)
-    # + return - The created event, or an `Error`
-    @display {label: "Create Event"}
-    remote isolated function createEvent(@display {label: "Memory ID"} string memoryId,
-            @display {label: "Actor ID"} string actorId,
-            @display {label: "Session ID"} string sessionId,
-            @display {label: "Event Timestamp"} time:Utc eventTimestamp,
-            @display {label: "Payload"} json[] payload) returns WireEvent|Error {
+    remote isolated function createEvent(string memoryId, string actorId, string sessionId, time:Utc eventTimestamp,
+            json[] payload) returns WireEvent|Error {
         CreateEventRequest request = {
             actorId,
             sessionId,
@@ -109,22 +92,9 @@ public isolated client class MemoryClient {
         return decoded.event;
     }
 
-    # Lists events for a session, newest-first per AgentCore's own ordering where documented, but
-    # callers must not rely on server-side order - AWS documents none for `ListEvents` (see
-    # `memory_read.bal`, which sorts client-side).
-    #
-    # + memoryId - The AgentCore Memory resource id
-    # + actorId - The sanitized actor id
-    # + sessionId - The sanitized session id
-    # + maxResults - The page size, 1-100
-    # + nextToken - The pagination token from a previous page, if any
-    # + return - The page of events plus an optional `nextToken`, or an `Error`
-    @display {label: "List Events"}
-    remote isolated function listEvents(@display {label: "Memory ID"} string memoryId,
-            @display {label: "Actor ID"} string actorId,
-            @display {label: "Session ID"} string sessionId,
-            @display {label: "Max Results"} int maxResults,
-            @display {label: "Next Token"} string? nextToken = ()) returns ListEventsResponse|Error {
+    // AWS documents no ordering for `ListEvents`; callers sort client-side (see `memory_read.bal`).
+    remote isolated function listEvents(string memoryId, string actorId, string sessionId, int maxResults,
+            string? nextToken = ()) returns ListEventsResponse|Error {
         ListEventsRequest request = {maxResults, nextToken};
         json response = check self.sendSigned(self.dataPlaneHttp, self.dataPlaneHost, DATA_PLANE_SERVICE, "POST",
             listEventsPath(memoryId, actorId, sessionId), request.toJson());
@@ -135,18 +105,8 @@ public isolated client class MemoryClient {
         return decoded;
     }
 
-    # Physically deletes one event.
-    #
-    # + memoryId - The AgentCore Memory resource id
-    # + actorId - The sanitized actor id
-    # + sessionId - The sanitized session id
-    # + eventId - The event id to delete, in AWS's `<number>#<hex>` format
-    # + return - The deleted event's id, or an `Error`
-    @display {label: "Delete Event"}
-    remote isolated function deleteEvent(@display {label: "Memory ID"} string memoryId,
-            @display {label: "Actor ID"} string actorId,
-            @display {label: "Session ID"} string sessionId,
-            @display {label: "Event ID"} string eventId) returns string|Error {
+    remote isolated function deleteEvent(string memoryId, string actorId, string sessionId, string eventId)
+            returns string|Error {
         string signerPath = deleteEventSignerPath(memoryId, actorId, sessionId, eventId);
         string httpPath = deleteEventHttpPath(memoryId, actorId, sessionId, eventId);
         json response = check self.sendSignedWithPaths(self.dataPlaneHttp, self.dataPlaneHost, DATA_PLANE_SERVICE,
@@ -158,40 +118,7 @@ public isolated client class MemoryClient {
         return decoded.eventId;
     }
 
-    # Searches long-term memory records.
-    #
-    # + memoryId - The AgentCore Memory resource id
-    # + namespace - The namespace prefix to search
-    # + searchQuery - The natural-language search query
-    # + topK - The maximum number of results to return
-    # + nextToken - The pagination token from a previous page, if any
-    # + return - The matching memory record summaries plus an optional `nextToken`, or an `Error`
-    @display {label: "Retrieve Memory Records"}
-    remote isolated function retrieveMemoryRecords(@display {label: "Memory ID"} string memoryId,
-            @display {label: "Namespace"} string namespace,
-            @display {label: "Search Query"} string searchQuery,
-            @display {label: "Top K"} int topK,
-            @display {label: "Next Token"} string? nextToken = ()) returns RetrieveMemoryRecordsResponse|Error {
-        RetrieveMemoryRecordsRequest request = {
-            namespace,
-            nextToken,
-            searchCriteria: {searchQuery, topK}
-        };
-        json response = check self.sendSigned(self.dataPlaneHttp, self.dataPlaneHost, DATA_PLANE_SERVICE, "POST",
-            retrieveMemoryRecordsPath(memoryId), request.toJson());
-        RetrieveMemoryRecordsResponse|error decoded = response.fromJsonWithType();
-        if decoded is error {
-            return error Error("Failed to decode the RetrieveMemoryRecords response: " + decoded.message(), decoded);
-        }
-        return decoded;
-    }
-
-    # Fetches a memory resource's control-plane details (used by `verifyMemory`).
-    #
-    # + memoryId - The AgentCore Memory resource id
-    # + return - The memory resource's `id` and `status`, or an `Error`
-    @display {label: "Get Memory"}
-    remote isolated function getMemory(@display {label: "Memory ID"} string memoryId) returns ControlPlaneMemory|Error {
+    remote isolated function getMemory(string memoryId) returns ControlPlaneMemory|Error {
         // The control plane's *endpoint* prefix is "bedrock-agentcore-control", but its SigV4
         // *signing* name is "bedrock-agentcore" - the same as the data plane (verified against
         // the service's own model: `endpointPrefix` and `signingName` differ only here). Signing
@@ -204,19 +131,6 @@ public isolated client class MemoryClient {
             return error Error("Failed to decode the GetMemory response: " + decoded.message(), decoded);
         }
         return decoded.memory;
-    }
-
-    # Releases the resources held by this client (and, if this client created its own credential
-    # provider, that provider's resources too).
-    #
-    # + return - An `Error` if releasing resources fails, or `()`
-    public isolated function close() returns Error? {
-        if self.ownsCredentialProvider {
-            auth:Error? result = self.credentialProvider.close();
-            if result is auth:Error {
-                return error Error("Failed to close the AWS credential provider: " + result.message(), result);
-            }
-        }
     }
 
     private isolated function sendSigned(http:Client target, string host, string serviceName, string method,

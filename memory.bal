@@ -178,13 +178,6 @@ public isolated class Memory {
         return result;
     }
 
-    # Releases the resources held by this memory's underlying `MemoryClient`.
-    #
-    # + return - An `Error` if releasing resources fails, or `()`
-    public isolated function close() returns Error? {
-        return self.agentCoreClient.close();
-    }
-
     private isolated function resolveKeys(string operation, string sessionId) returns [string, string]|Error {
         [string, string]|Error keys = resolveSessionKey(self.sessionKeyConfig, sessionId);
         logIfFailed(operation, sessionId, keys);

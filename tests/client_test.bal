@@ -32,7 +32,6 @@ function testCreateEventReturnsAnAwsShapedEventId() returns error? {
     test:assertEquals(event.sessionId, "chat-1");
     test:assertEquals(event.memoryId, MOCK_MEMORY_ID);
     test:assertEquals(event.payload.length(), 2);
-    check agentCoreClient.close();
 }
 
 @test:Config
@@ -48,7 +47,6 @@ function testEventIdSequenceStrictlyIncreases() returns error? {
         test:assertTrue(sequence > previous, "event id prefixes must increase with creation order");
         previous = sequence;
     }
-    check agentCoreClient.close();
 }
 
 @test:Config
@@ -67,7 +65,6 @@ function testListEventsReturnsWhatWasCreated() returns error? {
     // Another session's events are not visible.
     ListEventsResponse other = check agentCoreClient->listEvents(MOCK_MEMORY_ID, "user-42", "chat-other", MAX_PAGE_SIZE);
     test:assertEquals(other.events.length(), 0);
-    check agentCoreClient.close();
 }
 
 @test:Config
@@ -81,7 +78,6 @@ function testListEventsHonoursMaxResults() returns error? {
 
     ListEventsResponse page = check agentCoreClient->listEvents(MOCK_MEMORY_ID, "user-42", "chat-page", 2);
     test:assertEquals(page.events.length(), 2);
-    check agentCoreClient.close();
 }
 
 @test:Config
@@ -100,66 +96,6 @@ function testDeleteEventSendsThePercentEncodedEventId() returns error? {
     test:assertEquals(rawPaths.length(), 1);
     test:assertTrue(rawPaths[0].includes("%23"), string `event id was not encoded: '${rawPaths[0]}'`);
     test:assertFalse(rawPaths[0].includes("#"), string `a raw '#' truncates the request line: '${rawPaths[0]}'`);
-    check agentCoreClient.close();
-}
-
-@test:Config
-function testRetrieveMemoryRecordsNestsSearchCriteria() returns error? {
-    resetMock();
-    setMockRecords({
-        "/facts/user-42": [
-            {
-                "content": {"text": "prefers dark mode"},
-                "createdAt": 1758000000,
-                "memoryRecordId": "rec-1",
-                "memoryStrategyId": "strategy-1",
-                "namespaces": ["/facts/user-42"],
-                "score": 0.91
-            }
-        ]
-    });
-    MemoryClient agentCoreClient = check new (mockConnectionConfig());
-
-    RetrieveMemoryRecordsResponse response =
-        check agentCoreClient->retrieveMemoryRecords(MOCK_MEMORY_ID, "/facts/user-42", "theme preference", 5);
-
-    test:assertEquals(response.memoryRecordSummaries.length(), 1);
-    MemoryRecordSummary summary = response.memoryRecordSummaries[0];
-    test:assertEquals(summary.content["text"], "prefers dark mode");
-    test:assertEquals(summary.namespaces, ["/facts/user-42"]);
-    test:assertEquals(summary?.score, 0.91);
-
-    map<json> body = <map<json>>mockRetrievedBodies()[0];
-    test:assertEquals(body["namespace"], "/facts/user-42");
-    map<json> criteria = <map<json>>body["searchCriteria"];
-    test:assertEquals(criteria["searchQuery"], "theme preference");
-    test:assertEquals(criteria["topK"], 5);
-    check agentCoreClient.close();
-}
-
-@test:Config
-function testRetrieveMemoryRecordsToleratesAnAdditiveResponseField() returns error? {
-    resetMock();
-    setMockRecords({
-        "/facts/user-42": [
-            {
-                "content": {"text": "likes tea"},
-                "createdAt": 1758000000,
-                "memoryRecordId": "rec-1",
-                "memoryStrategyId": "strategy-1",
-                "namespaces": ["/facts/user-42"],
-                // A field AWS could add tomorrow: decoding must not fail for every caller at once.
-                "somethingAwsAddedLater": {"nested": true}
-            }
-        ]
-    });
-    MemoryClient agentCoreClient = check new (mockConnectionConfig());
-
-    RetrieveMemoryRecordsResponse response =
-        check agentCoreClient->retrieveMemoryRecords(MOCK_MEMORY_ID, "/facts/user-42", "drinks", 5);
-    test:assertEquals(response.memoryRecordSummaries.length(), 1);
-    test:assertTrue(response.memoryRecordSummaries[0]?.score is ());
-    check agentCoreClient.close();
 }
 
 @test:Config
@@ -170,7 +106,6 @@ function testGetMemoryReadsTheControlPlane() returns error? {
     ControlPlaneMemory memory = check agentCoreClient->getMemory(MOCK_MEMORY_ID);
     test:assertEquals(memory.id, MOCK_MEMORY_ID);
     test:assertEquals(memory.status, "ACTIVE");
-    check agentCoreClient.close();
 }
 
 @test:Config
@@ -188,7 +123,6 @@ function testControlPlaneIsSignedWithTheDataPlaneServiceName() returns error? {
             string `control-plane call was not signed for '${DATA_PLANE_SERVICE}': '${authorization}'`);
     test:assertFalse(authorization.includes(CONTROL_PLANE_SERVICE + "/aws4_request"),
             string `control-plane call was signed with the endpoint prefix: '${authorization}'`);
-    check agentCoreClient.close();
 }
 
 @test:Config
@@ -202,7 +136,6 @@ function testDataPlaneIsSignedForTheSameService() returns error? {
     test:assertTrue(authorization.includes(string `/${MOCK_REGION}/${DATA_PLANE_SERVICE}/aws4_request`));
     test:assertTrue(authorization.includes("SignedHeaders="));
     test:assertTrue(authorization.includes("Signature="));
-    check agentCoreClient.close();
 }
 
 @test:Config
@@ -213,7 +146,6 @@ function testCustomEndpointSchemeIsHonoured() returns error? {
     MemoryClient agentCoreClient = check new (mockConnectionConfig());
     _ = check agentCoreClient->getMemory(MOCK_MEMORY_ID);
     test:assertEquals(mockCallCount("GetMemory"), 1);
-    check agentCoreClient.close();
 }
 
 @test:Config
@@ -226,7 +158,6 @@ function testThrottlingIsRetriedUntilItSucceeds() returns error? {
             buildEventPayload([{role: "user", content: "hi"}]));
     test:assertTrue(event.eventId.length() > 0);
     test:assertEquals(mockCallCount("CreateEvent"), 3, "two throttled attempts should be followed by a success");
-    check agentCoreClient.close();
 }
 
 @test:Config
@@ -244,7 +175,6 @@ function testValidationFailuresAreNotRetried() returns error? {
     test:assertEquals(err.detail()?.requestId, "mock-request-id-0001");
     test:assertEquals(err.message(), "injected ValidationException", "the AWS-sent message must be surfaced");
     test:assertEquals(mockCallCount("CreateEvent"), 1, "a validation failure must not be retried");
-    check agentCoreClient.close();
 }
 
 @test:Config
@@ -257,7 +187,6 @@ function testServerFaultsAreRetriedUpToTheAttemptBudget() returns error? {
             buildEventPayload([{role: "user", content: "hi"}]));
     test:assertTrue(event is Error);
     test:assertEquals(mockCallCount("CreateEvent"), MAX_RETRY_ATTEMPTS + 1);
-    check agentCoreClient.close();
 }
 
 @test:Config
@@ -269,5 +198,4 @@ function testDeletingAMissingEventSurfacesTheAwsError() returns error? {
     test:assertTrue(deleted is Error);
     test:assertEquals((<Error>deleted).detail()?.httpStatusCode, 404);
     test:assertEquals(mockCallCount("DeleteEvent"), 1, "a 404 must not be retried");
-    check agentCoreClient.close();
 }

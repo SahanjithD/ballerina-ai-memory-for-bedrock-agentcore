@@ -6,3 +6,5 @@ tests/Config.toml
 .DS_Store
 .gradle/
 build/
+long-term-memory-parked.md
+

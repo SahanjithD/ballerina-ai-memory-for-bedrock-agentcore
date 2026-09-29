@@ -22,8 +22,6 @@ isolated function createEventPath(string memoryId) returns string => string `/me
 isolated function listEventsPath(string memoryId, string actorId, string sessionId) returns string =>
     string `/memories/${memoryId}/actor/${actorId}/sessions/${sessionId}`;
 
-isolated function retrieveMemoryRecordsPath(string memoryId) returns string => string `/memories/${memoryId}/retrieve`;
-
 # Builds the `DeleteEvent` path in the form the AWS SigV4 signer expects: raw, with the event id's
 # literal `#` left unencoded. `aws.auth:SignatureRequest.path` is documented "unencoded" - the
 # signer does its own URI-encoding when building the canonical request - so this must be the

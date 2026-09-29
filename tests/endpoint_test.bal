@@ -22,7 +22,6 @@ function testDataPlanePaths() {
     test:assertEquals(createEventPath("mem-1"), "/memories/mem-1/events");
     test:assertEquals(listEventsPath("mem-1", "user-42", "chat-7"),
             "/memories/mem-1/actor/user-42/sessions/chat-7");
-    test:assertEquals(retrieveMemoryRecordsPath("mem-1"), "/memories/mem-1/retrieve");
     test:assertEquals(getMemoryPath("mem-1"), "/memories/mem-1/details");
 }
 

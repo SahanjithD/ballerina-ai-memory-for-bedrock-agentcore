@@ -16,7 +16,7 @@
 import ballerina/time;
 
 // The wire types below are transcribed directly from the AWS API reference for the AgentCore
-// Memory data-plane API (`CreateEvent`, `ListEvents`, `DeleteEvent`, `RetrieveMemoryRecords`) and
+// Memory data-plane API (`CreateEvent`, `ListEvents`, `DeleteEvent`) and
 // the control-plane `GetMemory` operation. Field names and nesting must match the wire exactly -
 // they are not "cleaned up" to look more Ballerina-idiomatic.
 //
@@ -80,36 +80,6 @@ type ListEventsResponse record {
 type DeleteEventResponse record {|
     string eventId;
 |};
-
-type SearchCriteria record {|
-    string searchQuery;
-    string memoryStrategyId?;
-    FilterExpression[] metadataFilters?;
-    int topK?;
-|};
-
-type RetrieveMemoryRecordsRequest record {|
-    int maxResults?;
-    string namespace?;
-    string namespacePath?;
-    string nextToken?;
-    SearchCriteria searchCriteria;
-|};
-
-type MemoryRecordSummary record {
-    map<json> content;
-    decimal createdAt;
-    string memoryRecordId;
-    string memoryStrategyId;
-    map<json> metadata?;
-    string[] namespaces = [];
-    float score?;
-};
-
-type RetrieveMemoryRecordsResponse record {
-    MemoryRecordSummary[] memoryRecordSummaries = [];
-    string nextToken?;
-};
 
 // Control plane (`verifyMemory` only). Only the fields this module actually reads are typed; the
 // rest of the (much larger) `Memory` object is deliberately left untyped.

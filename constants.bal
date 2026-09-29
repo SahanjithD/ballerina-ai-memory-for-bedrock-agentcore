@@ -14,9 +14,9 @@
 // under the License.
 
 // The SigV4 signing name and endpoint-resolution service prefix for the AgentCore Memory
-// data-plane API (CreateEvent, ListEvents, DeleteEvent, RetrieveMemoryRecords). Also the correct
-// SigV4 signing name for the *control* plane (see `CONTROL_PLANE_SERVICE`) - both planes share one
-// signing name even though their endpoint prefixes differ.
+// data-plane API (CreateEvent, ListEvents, DeleteEvent). Also the correct SigV4 signing name for the
+// *control* plane (see `CONTROL_PLANE_SERVICE`) - both planes share one signing name even though
+// their endpoint prefixes differ.
 const string DATA_PLANE_SERVICE = "bedrock-agentcore";
 
 // The endpoint-resolution service prefix for the AgentCore control-plane API. Only `GetMemory`
@@ -39,9 +39,9 @@ const int MAX_EVENT_METADATA_ENTRIES = 15;
 // blob envelope itself has no such limit and is never trimmed.
 const int MAX_CONVERSATIONAL_TEXT_LENGTH = 100000;
 
-// `ListEvents.maxResults` and `RetrieveMemoryRecords.maxResults` both accept 1-100; both default
-// to 20 server-side when omitted. This module always requests the maximum page size so a plain
-// turn's read-back stays within a single `ListEvents` call whenever possible.
+// `ListEvents.maxResults` accepts 1-100 and defaults to 20 server-side when omitted. This module
+// always requests the maximum page size so a plain turn's read-back stays within a single
+// `ListEvents` call whenever possible.
 const int MAX_PAGE_SIZE = 100;
 
 // Retry policy for transient AgentCore failures (throttling, 5xx, retryable conflicts):
