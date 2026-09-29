@@ -43,7 +43,10 @@ public isolated class Memory {
             return error Error(string `Invalid maxEventsPerGet: '${config.maxEventsPerGet}'. ` +
                 string `Must be between 1 and ${MAX_PAGE_SIZE}.`);
         }
-        self.memoryId = config.memoryId;
+        string? configuredMemoryId = config?.memoryId;
+        if configuredMemoryId is () {
+            check validateMemoryResourceConfig(config.memoryResourceConfig);
+        }
         self.sessionKeyConfig = config.sessionKeyConfig.cloneReadOnly();
         self.deleteMode = config.deleteMode;
         self.maxEventsPerGet = config.maxEventsPerGet;
@@ -60,14 +63,19 @@ public isolated class Memory {
         }
         self.agentCoreClient = agentCoreClient;
 
+        if configuredMemoryId is () {
+            self.memoryId = check resolveMemoryId(agentCoreClient, config.memoryResourceConfig);
+            return;
+        }
+        self.memoryId = configuredMemoryId;
         if config.verifyMemory {
-            ControlPlaneMemory|Error memoryDetails = self.agentCoreClient->getMemory(config.memoryId);
+            ControlPlaneMemory|Error memoryDetails = agentCoreClient->getMemory(configuredMemoryId);
             if memoryDetails is Error {
-                return error Error(string `Failed to verify the AgentCore Memory resource '${config.memoryId}': ` +
+                return error Error(string `Failed to verify the AgentCore Memory resource '${configuredMemoryId}': ` +
                     memoryDetails.message(), memoryDetails);
             }
             if memoryDetails.status != "ACTIVE" {
-                return error Error(string `The AgentCore Memory resource '${config.memoryId}' is not active ` +
+                return error Error(string `The AgentCore Memory resource '${configuredMemoryId}' is not active ` +
                     string `(status: '${memoryDetails.status}').`);
             }
         }

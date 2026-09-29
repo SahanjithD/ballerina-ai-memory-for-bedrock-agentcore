@@ -53,3 +53,8 @@ isolated function deleteEventHttpPath(string memoryId, string actorId, string se
 }
 
 isolated function getMemoryPath(string memoryId) returns string => string `/memories/${memoryId}/details`;
+
+isolated function createMemoryPath() returns string => "/memories/create";
+
+// The trailing slash is part of the documented `ListMemories` URI (`POST /memories/`).
+isolated function listMemoriesPath() returns string => "/memories/";

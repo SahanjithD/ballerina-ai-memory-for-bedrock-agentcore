@@ -73,27 +73,33 @@ public type MemoryConfig record {|
     # Overrides endpoint resolution, e.g. to point at a local test double via `customEndpoint`.
     @display {label: "Endpoint Configuration"}
     aws:EndpointConfig endpointConfig = {};
-    # The underlying HTTP client configuration used for both the data-plane and (when
-    # `verifyMemory` is used) control-plane endpoints.
+    # The underlying HTTP client configuration used for both the data-plane and control-plane
+    # endpoints.
     @display {label: "HTTP Client Configuration"}
     http:ClientConfiguration httpConfig = {};
-    # The identifier of the AgentCore Memory resource to read from and write to - the plain id
-    # (e.g. `my-memory-ab12cd34ef`), not the full ARN. This module interpolates `memoryId` directly
-    # into both the signed request path and the HTTP request path without URL-encoding it, and the
-    # control-plane `GetMemory` id pattern used by `verifyMemory` does not accept an ARN either; an
-    # ARN's embedded `:`/`/` characters would break both.
+    # The identifier of an existing AgentCore Memory resource to use - the plain id (e.g.
+    # `my_memory-ab12cd34ef`), not the full ARN. This module interpolates `memoryId` directly into
+    # both the signed request path and the HTTP request path without URL-encoding it, and the
+    # control-plane `GetMemory` id pattern does not accept an ARN either; an ARN's embedded `:`/`/`
+    # characters would break both. When set, `memoryResourceConfig` is ignored and `init` makes no
+    # control-plane calls unless `verifyMemory` is `true`. When omitted, the memory resource is
+    # looked up by `memoryResourceConfig.memoryName`, and created if it does not exist yet.
     @display {label: "Memory ID"}
-    string memoryId;
+    string memoryId?;
+    # How the memory resource is found or created when `memoryId` is not set.
+    @display {label: "Memory Resource Configuration"}
+    MemoryResourceConfig memoryResourceConfig = {};
     # How `ai:Memory` session keys are mapped to AgentCore `actorId`/`sessionId` pairs.
     @display {label: "Session Key Configuration"}
     SessionKeyConfig sessionKeyConfig;
     # How `delete` removes a session's history. Defaults to `SOFT`.
     @display {label: "Delete Mode"}
     DeleteMode deleteMode = SOFT;
-    # When `true`, `init` calls the AgentCore control plane (`GetMemory`) to confirm the
-    # configured `memoryId` exists and is `ACTIVE` before returning. Requires the
+    # When `true` and `memoryId` is set, `init` calls the AgentCore control plane (`GetMemory`) to
+    # confirm that memory exists and is `ACTIVE` before returning. Requires the
     # `bedrock-agentcore:GetMemory` permission in addition to the data-plane permissions. Defaults
-    # to `false` so initialization never needs control-plane access.
+    # to `false`, so a `memoryId`-configured memory never needs control-plane access. Has no effect
+    # without `memoryId`: a memory found or created by name is always waited on until `ACTIVE`.
     @display {label: "Verify Memory"}
     boolean verifyMemory = false;
     # The `maxResults` requested on the single `ListEvents` call each `get` makes (1-100; AgentCore
@@ -103,4 +109,37 @@ public type MemoryConfig record {|
     # AWS's pricing model, an unbounded per-call cost.
     @display {label: "Max Events Per Get"}
     int maxEventsPerGet = 100;
+|};
+
+# Configuration for the AgentCore Memory resource that backs `agentcore:Memory` when no `memoryId`
+# is given.
+#
+# + memoryName - The memory resource's name, unique within the AWS account and region. Must start
+# with a letter and contain only letters, digits, and underscores (at most 48 characters)
+# + createMemoryIfNotExists - Whether `init` should create the memory resource when none with
+# `memoryName` exists. Defaults to `true`. Finding the resource calls `ListMemories` and
+# `GetMemory`, and creating it calls `CreateMemory`, so these need the
+# `bedrock-agentcore:ListMemories`, `bedrock-agentcore:GetMemory` and
+# `bedrock-agentcore:CreateMemory` IAM permissions. Set to `false` to only ever use an existing
+# resource by name, or set `MemoryConfig.memoryId` instead to make no control-plane calls at all
+# + eventExpiryDuration - The number of days after which the memory's events expire (3-365), used
+# when the connector creates the resource. Ignored if the resource already exists
+# + description - An optional description, used when the connector creates the resource
+# + encryptionKeyArn - The ARN of a customer-managed AWS KMS key to encrypt the memory with, used
+# when the connector creates the resource. If omitted, AgentCore's default encryption is used
+# + tags - Optional tags to apply when the connector creates the resource
+@display {label: "Memory Resource Configuration"}
+public type MemoryResourceConfig record {|
+    @display {label: "Memory Name"}
+    string memoryName = "chat_memory";
+    @display {label: "Create Memory If Not Exists"}
+    boolean createMemoryIfNotExists = true;
+    @display {label: "Event Expiry Duration (Days)"}
+    int eventExpiryDuration = 90;
+    @display {label: "Description"}
+    string description?;
+    @display {label: "Encryption Key ARN"}
+    string encryptionKeyArn?;
+    @display {label: "Tags"}
+    map<string> tags?;
 |};

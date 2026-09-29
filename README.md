@@ -6,14 +6,15 @@
 
 - An `ai:Memory` (`agentcore:Memory`) that stores each agent turn as a single AgentCore event: a lossless JSON envelope for exact replay, alongside plain-text items for AgentCore's own extraction strategies
 - `get` folds a session's events back into one message list, tolerating events written by other SDKs sharing the same memory resource
+- Finds its AgentCore Memory resource by name and creates it on first use (like the DynamoDB memory store's table), or uses an existing one by `memoryId`
 - Durable human-in-the-loop checkpoints (`putCheckpoint`/`getCheckpoint`/`removeCheckpoint`/`takeCheckpoint`), so a run paused for approval survives a restart or resumes on another replica
 - Two delete modes: `SOFT` (an instant reset marker) and `PHYSICAL` (rate-limited removal of every prior event)
 - SigV4 request signing and AWS credential resolution via `ballerinax/aws.auth` (the default credential provider chain, static credentials, profiles, assume-role, web identity, SSO, or an external credential process)
 
 ## Prerequisites
 
-- An AWS account with an [AgentCore Memory resource](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/memory.html) already created, and credentials that grant `bedrock-agentcore:CreateEvent` and `bedrock-agentcore:ListEvents`. `bedrock-agentcore:DeleteEvent` is additionally needed for `PHYSICAL` delete and for human-in-the-loop checkpoints (tools that require approval), and `bedrock-agentcore:GetMemory` for `verifyMemory`.
-- Creating and configuring the memory resource itself (extraction strategies, namespaces, `eventExpiryDuration`) is out of scope for this package - use the AWS Console, CLI, or IaC.
+- An AWS account and credentials that grant `bedrock-agentcore:CreateEvent` and `bedrock-agentcore:ListEvents`. `bedrock-agentcore:DeleteEvent` is additionally needed for `PHYSICAL` delete and for human-in-the-loop checkpoints (tools that require approval).
+- By default the connector finds its [AgentCore Memory resource](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/memory.html) by name and creates it if it does not exist yet, which additionally needs `bedrock-agentcore:ListMemories`, `bedrock-agentcore:GetMemory`, and `bedrock-agentcore:CreateMemory`. To run with data-plane permissions only, create the memory resource yourself (AWS Console, CLI, or IaC) and pass its `memoryId` - see [Memory resource](#memory-resource).
 - A local [Ballerina](https://ballerina.io/downloads/) installation to build this package from source.
 
 ## Quickstart
@@ -30,21 +31,20 @@ import ballerinax/ai.aws.agentcore;
 
 ```ballerina
 configurable string region = ?;
-configurable string memoryId = ?;
 
 ai:Memory memory = check new agentcore:Memory({
     region,
-    memoryId,
     sessionKeyConfig: {actorId: "my-agent"}
 });
 ```
 
-or `agentcore:CompositeSessionKeyConfig` when the session key itself already encodes both, e.g. a session key of `"user-42/chat-7"`:
+On first use, this creates an AgentCore Memory resource named `chat_memory` and waits until it is active; later runs find and reuse it (see [Memory resource](#memory-resource)).
+
+Use `agentcore:CompositeSessionKeyConfig` instead when the session key itself already encodes both, e.g. a session key of `"user-42/chat-7"`:
 
 ```ballerina
 ai:Memory memory = check new agentcore:Memory({
     region,
-    memoryId,
     sessionKeyConfig: {separator: "/"}
 });
 ```
@@ -57,7 +57,6 @@ configurable string secretAccessKey = ?;
 
 ai:Memory memory = check new agentcore:Memory({
     region,
-    memoryId,
     sessionKeyConfig: {actorId: "my-agent"},
     auth: {accessKeyId, secretAccessKey}
 });
@@ -74,6 +73,38 @@ ai:Agent agent = check new ({
 ```
 
 Every call to `agent.run(sessionId, query)` reads the session's prior turns from AgentCore and, once the run completes, writes the new turn back as one event.
+
+## Memory resource
+
+The memory resource is handled much like the DynamoDB memory store's table. Unless `memoryId` is set, `init` looks for an AgentCore Memory resource named `memoryResourceConfig.memoryName` (default `chat_memory`), creates it if it does not exist and `createMemoryIfNotExists` is `true` (the default), and waits for it to become `ACTIVE`. If two instances start at once and both try to create it, the one that loses the race uses the memory the other created.
+
+```ballerina
+ai:Memory memory = check new agentcore:Memory({
+    region,
+    sessionKeyConfig: {actorId: "my-agent"},
+    memoryResourceConfig: {
+        memoryName: "support_agent_memory",
+        eventExpiryDuration: 30,
+        tags: {"team": "support"}
+    }
+});
+```
+
+`eventExpiryDuration` (days, 3-365, default 90), `description`, `encryptionKeyArn`, and `tags` apply only when the connector creates the resource.
+
+A memory the connector creates has no extraction strategies, so it stores conversation history (short-term memory) only. To have AgentCore also extract long-term memory records, create the memory resource yourself with the strategies you want - by the same name, or pass its id:
+
+```ballerina
+configurable string memoryId = ?;
+
+ai:Memory memory = check new agentcore:Memory({
+    region,
+    memoryId,
+    sessionKeyConfig: {actorId: "my-agent"}
+});
+```
+
+With `memoryId` set, `init` makes no control-plane calls at all (set `verifyMemory: true` to have it confirm the memory is `ACTIVE` via `GetMemory`).
 
 ## Storage model
 

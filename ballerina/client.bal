@@ -133,6 +133,40 @@ isolated client class MemoryClient {
         return decoded.memory;
     }
 
+    remote isolated function listMemories(string? nextToken = ()) returns ListMemoriesResponse|Error {
+        ListMemoriesRequest request = {maxResults: MAX_PAGE_SIZE, nextToken};
+        json response = check self.sendSigned(self.controlPlaneHttp, self.controlPlaneHost, DATA_PLANE_SERVICE,
+            "POST", listMemoriesPath(), request.toJson());
+        ListMemoriesResponse|error decoded = response.fromJsonWithType();
+        if decoded is error {
+            return error Error("Failed to decode the ListMemories response: " + decoded.message(), decoded);
+        }
+        return decoded;
+    }
+
+    // The `clientToken` is minted once per call and so is identical across this call's retries,
+    // which makes a retried `CreateMemory` idempotent rather than a second creation attempt.
+    remote isolated function createMemory(string name, int eventExpiryDuration, string? description = (),
+            string? encryptionKeyArn = (), map<string>? tags = ()) returns ControlPlaneMemory|Error {
+        CreateMemoryRequest request = {clientToken: uuid:createRandomUuid(), name, eventExpiryDuration};
+        if description is string {
+            request.description = description;
+        }
+        if encryptionKeyArn is string {
+            request.encryptionKeyArn = encryptionKeyArn;
+        }
+        if tags is map<string> {
+            request.tags = tags;
+        }
+        json response = check self.sendSigned(self.controlPlaneHttp, self.controlPlaneHost, DATA_PLANE_SERVICE,
+            "POST", createMemoryPath(), request.toJson());
+        CreateMemoryResponse|error decoded = response.fromJsonWithType();
+        if decoded is error {
+            return error Error("Failed to decode the CreateMemory response: " + decoded.message(), decoded);
+        }
+        return decoded.memory;
+    }
+
     private isolated function sendSigned(http:Client target, string host, string serviceName, string method,
             string path, json? body) returns json|Error =>
         self.sendSignedWithPaths(target, host, serviceName, method, path, path, body);

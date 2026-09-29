@@ -53,6 +53,15 @@ isolated function mockMemoryConfig(SessionKeyConfig sessionKeyConfig, DeleteMode
     maxEventsPerGet
 };
 
+type MockMemory record {|
+    string id;
+    string name;
+    string status;
+    int pollsUntilSettled;
+    string settledStatus;
+    string? failureReason;
+|};
+
 type MockEvent record {|
     string eventId;
     string actorId;
@@ -75,6 +84,16 @@ type MockState record {|
     string[] deleteRawPaths = [];
     json[] listEventsBodies = [];
     string memoryStatus = "ACTIVE";
+    // Control-plane memory resources, keyed by id. Ids not in here fall back to `memoryStatus`.
+    map<MockMemory> memories = {};
+    int memorySequence = 0;
+    // How a memory created through `CreateMemory` behaves on the `GetMemory` polls that follow.
+    int newMemoryPollsUntilSettled = 0;
+    string newMemorySettledStatus = "ACTIVE";
+    string? newMemoryFailureReason = ();
+    // Hides every memory from this many upcoming `ListMemories` calls, to stage a creation race.
+    int listMemoriesHidden = 0;
+    json[] createMemoryBodies = [];
     int failuresRemaining = 0;
     int failureStatus = 429;
     string failureErrorType = "ThrottledException";
@@ -150,7 +169,36 @@ service / on new http:Listener(mockPort) {
         if failure is http:Response {
             return failure;
         }
+        map<json>? tracked = pollMockMemory(memoryId);
+        if tracked is map<json> {
+            return {"memory": tracked};
+        }
         return {"memory": {"id": memoryId, "status": mockStatus(), "eventExpiryDuration": 7}};
+    }
+
+    resource function post memories/create(http:Request request) returns json|http:Response|error {
+        recordCall("CreateMemory", request);
+        http:Response? failure = preflightFailure("CreateMemory", request);
+        if failure is http:Response {
+            return failure;
+        }
+        map<json> body = <map<json>>check request.getJsonPayload();
+        string name = <string>body["name"];
+        map<json>? created = createMockMemory(name, body);
+        if created is () {
+            return awsFailure(409, "ConflictException", string `a memory named '${name}' already exists`);
+        }
+        return {"memory": created};
+    }
+
+    // `ListMemories` is `POST /memories/`.
+    resource function post memories(http:Request request) returns json|http:Response {
+        recordCall("ListMemories", request);
+        http:Response? failure = preflightFailure("ListMemories", request);
+        if failure is http:Response {
+            return failure;
+        }
+        return {"memories": listMockMemories()};
     }
 }
 
@@ -319,6 +367,12 @@ isolated function resetMock() {
         mockState.deleteRawPaths = [];
         mockState.listEventsBodies = [];
         mockState.memoryStatus = "ACTIVE";
+        mockState.memories = {};
+        mockState.newMemoryPollsUntilSettled = 0;
+        mockState.newMemorySettledStatus = "ACTIVE";
+        mockState.newMemoryFailureReason = ();
+        mockState.listMemoriesHidden = 0;
+        mockState.createMemoryBodies = [];
         mockState.failuresRemaining = 0;
         mockState.failureOperation = "";
     }
@@ -389,3 +443,112 @@ isolated function injectForeignEvent(string actorId, string sessionId, json[] pa
         payload
     });
 }
+
+isolated function createMockMemory(string name, map<json> body) returns map<json>? {
+    lock {
+        foreach MockMemory memory in mockState.memories {
+            if memory.name == name {
+                return ();
+            }
+        }
+        mockState.createMemoryBodies.push(body.clone());
+        mockState.memorySequence += 1;
+        string id = string `${name}-M${mockState.memorySequence.toString().padZero(9)}`;
+        mockState.memories[id] = {
+            id,
+            name,
+            status: "CREATING",
+            pollsUntilSettled: mockState.newMemoryPollsUntilSettled,
+            settledStatus: mockState.newMemorySettledStatus,
+            failureReason: mockState.newMemoryFailureReason
+        };
+        return {"id": id, "name": name, "status": "CREATING"};
+    }
+}
+
+isolated function pollMockMemory(string id) returns map<json>? {
+    lock {
+        MockMemory? memory = mockState.memories[id];
+        if memory is () {
+            return ();
+        }
+        if memory.status == "CREATING" {
+            if memory.pollsUntilSettled > 0 {
+                memory.pollsUntilSettled -= 1;
+            } else {
+                memory.status = memory.settledStatus;
+            }
+        }
+        map<json> details = {"id": memory.id, "name": memory.name, "status": memory.status};
+        string? reason = memory.failureReason;
+        if reason is string && memory.status == "FAILED" {
+            details = {"id": memory.id, "name": memory.name, "status": memory.status, "failureReason": reason};
+        }
+        return details.clone();
+    }
+}
+
+isolated function listMockMemories() returns json[] {
+    lock {
+        if mockState.listMemoriesHidden > 0 {
+            mockState.listMemoriesHidden -= 1;
+            return [];
+        }
+        json[] summaries = from MockMemory memory in mockState.memories
+            select {"id": memory.id, "status": memory.status};
+        return summaries.clone();
+    }
+}
+
+// Registers a memory resource that already exists before the test's `init` runs.
+isolated function seedMockMemory(string name, string status = "ACTIVE", string? id = ()) returns string {
+    lock {
+        mockState.memorySequence += 1;
+        string memoryId = id ?: string `${name}-S${mockState.memorySequence.toString().padZero(9)}`;
+        mockState.memories[memoryId] = {
+            id: memoryId,
+            name,
+            status,
+            pollsUntilSettled: 0,
+            settledStatus: status,
+            failureReason: ()
+        };
+        return memoryId;
+    }
+}
+
+isolated function setMockNewMemoryBehavior(int pollsUntilSettled, string settledStatus = "ACTIVE",
+        string? failureReason = ()) {
+    lock {
+        mockState.newMemoryPollsUntilSettled = pollsUntilSettled;
+        mockState.newMemorySettledStatus = settledStatus;
+        mockState.newMemoryFailureReason = failureReason;
+    }
+}
+
+isolated function hideMockMemoriesFromNextLists(int count) {
+    lock {
+        mockState.listMemoriesHidden = count;
+    }
+}
+
+isolated function mockCreateMemoryBodies() returns json[] {
+    lock {
+        return mockState.createMemoryBodies.clone();
+    }
+}
+
+isolated function mockMemoryIds() returns string[] {
+    lock {
+        return mockState.memories.keys().clone();
+    }
+}
+
+isolated function mockProvisionedConfig(MemoryResourceConfig memoryResourceConfig = {}) returns MemoryConfig => {
+    region: MOCK_REGION,
+    auth: MOCK_CREDENTIALS,
+    endpointConfig: {customEndpoint: string `http://localhost:${mockPort}`},
+    memoryResourceConfig,
+    sessionKeyConfig: {actorId: "user-42"}
+};
+

@@ -81,8 +81,8 @@ type DeleteEventResponse record {|
     string eventId;
 |};
 
-// Control plane (`verifyMemory` only). Only the fields this module actually reads are typed; the
-// rest of the (much larger) `Memory` object is deliberately left untyped.
+// Control plane (`GetMemory`, `ListMemories`, `CreateMemory`). Only the fields this module actually
+// reads are typed; the rest of the (much larger) `Memory` object is deliberately left untyped.
 type GetMemoryResponse record {
     ControlPlaneMemory memory;
 };
@@ -90,6 +90,38 @@ type GetMemoryResponse record {
 type ControlPlaneMemory record {
     string id;
     string status;
+    string name?;
+    string failureReason?;
+};
+
+type CreateMemoryRequest record {|
+    string clientToken;
+    string name;
+    int eventExpiryDuration;
+    string description?;
+    string encryptionKeyArn?;
+    map<string> tags?;
+|};
+
+type CreateMemoryResponse record {
+    ControlPlaneMemory memory;
+};
+
+type ListMemoriesRequest record {|
+    int maxResults;
+    string nextToken?;
+|};
+
+// `ListMemories` returns summaries without the memory's `name` - see `provisioning.bal` for how a
+// memory is found by name anyway.
+type MemorySummary record {
+    string id;
+    string status;
+};
+
+type ListMemoriesResponse record {
+    MemorySummary[] memories = [];
+    string nextToken?;
 };
 
 // AWS `Timestamp` shapes on `rest-json` services (the protocol this API uses) serialize as epoch
