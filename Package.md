@@ -6,6 +6,7 @@ This package provides an [Amazon Bedrock AgentCore Memory](https://docs.aws.amaz
 
 - An `ai:Memory` (`agentcore:Memory`) that stores each agent turn as a single AgentCore event: a lossless JSON envelope for exact replay, alongside plain-text items for AgentCore's own extraction strategies
 - `get` folds a session's events back into one message list, tolerating events written by other SDKs sharing the same memory resource
+- Durable human-in-the-loop checkpoints (`putCheckpoint`/`getCheckpoint`/`removeCheckpoint`/`takeCheckpoint`), so a run paused for approval survives a restart or resumes on another replica
 - Two delete modes: `SOFT` (an instant reset marker) and `PHYSICAL` (rate-limited removal of every prior event)
 - `LongTermMemoryToolKit`, a tool-based recall toolkit the LLM calls explicitly to search AgentCore's extracted long-term memory records across one or more namespaces
 - `RecallAugmentedMemory`, an optional, off-by-default wrapper that searches long-term memory on every turn instead of waiting for a tool call
@@ -14,7 +15,7 @@ This package provides an [Amazon Bedrock AgentCore Memory](https://docs.aws.amaz
 
 ## Prerequisites
 
-- An AWS account with an [AgentCore Memory resource](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/memory.html) already created, and credentials that grant `bedrock-agentcore:CreateEvent`, `bedrock-agentcore:ListEvents`, and (if using `PHYSICAL` delete or `LongTermMemoryToolKit`/`RecallAugmentedMemory`) `bedrock-agentcore:DeleteEvent` and `bedrock-agentcore:RetrieveMemoryRecords` respectively. `verifyMemory` additionally needs `bedrock-agentcore:GetMemory`.
+- An AWS account with an [AgentCore Memory resource](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/memory.html) already created, and credentials that grant `bedrock-agentcore:CreateEvent` and `bedrock-agentcore:ListEvents`. `bedrock-agentcore:DeleteEvent` is additionally needed for `PHYSICAL` delete and for human-in-the-loop checkpoints (tools that require approval), `bedrock-agentcore:RetrieveMemoryRecords` for `LongTermMemoryToolKit`/`RecallAugmentedMemory`, and `bedrock-agentcore:GetMemory` for `verifyMemory`.
 - Creating and configuring the memory resource itself (extraction strategies, namespaces, `eventExpiryDuration`) is out of scope for this package - use the AWS Console, CLI, or IaC.
 
 ## Quickstart
@@ -111,6 +112,15 @@ Each `ai:Memory.update` call - one per completed agent turn - is written as a si
 
 - **`SOFT`** writes a reset-marker event; `get` then treats everything before it as void. Prior events remain in AgentCore until `eventExpiryDuration` expires. Cheap and instant - the default for a reason.
 - **`PHYSICAL`** does the same, then also issues `DeleteEvent` for every prior event, rate-limited client-side to stay well under AgentCore's account-level quota.
+
+Either mode also removes the session's pending human-in-the-loop checkpoint, if any.
+
+## Human-in-the-loop checkpoints
+
+When an `ai:Agent` tool requires approval, the agent pauses and persists its state through the memory's checkpoint methods. `agentcore:Memory` stores that checkpoint in AgentCore itself, so a paused run survives a restart and can be resumed on another replica - no extra configuration is needed.
+
+- A checkpoint lives in its own AgentCore session under the same actor, derived from the conversation session. It never appears in `get`'s history and never uses up `maxEventsPerGet`. Session ids starting with `ckpt--` are reserved for this and rejected.
+- `takeCheckpoint` claims a checkpoint by deleting its event, so if several resumes for the same session race, only one gets the pending approval; the others get `()`. This relies on AgentCore's `DeleteEvent` rejecting a second delete of the same event.
 
 ## Optional recall injection
 

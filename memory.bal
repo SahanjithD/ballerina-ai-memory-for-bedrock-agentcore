@@ -18,8 +18,10 @@ import ballerina/time;
 
 # An `ai:Memory` implementation backed by Amazon Bedrock AgentCore Memory. Each `update` call
 # (one per agent turn) is stored as a single AgentCore event carrying the whole turn losslessly;
-# `get` reads every event for the session back and folds them into one message list. See the
-# package's design notes for the rationale.
+# `get` reads every event for the session back and folds them into one message list. Pending
+# human-in-the-loop approvals are persisted in AgentCore too, so a paused run survives a restart
+# or resumes on another replica. See the package's design notes for the rationale.
+@display {label: "Amazon Bedrock AgentCore Memory"}
 public isolated class Memory {
     *ai:Memory;
 
@@ -36,7 +38,7 @@ public isolated class Memory {
     # + return - An `Error` if the underlying client fails to initialize, if `verifyMemory` is
     # `true` and the configured `memoryId` cannot be confirmed active, or if `config` is otherwise
     # invalid
-    public isolated function init(MemoryConfig config) returns Error? {
+    public isolated function init(@display {label: "Memory Configuration"} MemoryConfig config) returns Error? {
         if config.maxEventsPerGet < 1 || config.maxEventsPerGet > MAX_PAGE_SIZE {
             return error Error(string `Invalid maxEventsPerGet: '${config.maxEventsPerGet}'. ` +
                 string `Must be between 1 and ${MAX_PAGE_SIZE}.`);
@@ -78,17 +80,10 @@ public isolated class Memory {
     # + sessionId - The session key
     # + return - The session's messages, or an `ai:MemoryError`
     public isolated function get(string sessionId) returns ai:ChatMessage[]|ai:MemoryError {
-        [string, string]|Error keys = resolveSessionKey(self.sessionKeyConfig, sessionId);
-        if keys is Error {
-            logAgentCoreFailure("get", sessionId, keys);
-            return keys;
-        }
-        var [actorId, agentSessionId] = keys;
+        [string, string] [actorId, agentSessionId] = check self.resolveKeys("get", sessionId);
         ai:ChatMessage[]|Error result =
             readSession(self.agentCoreClient, self.memoryId, actorId, agentSessionId, self.maxEventsPerGet);
-        if result is Error {
-            logAgentCoreFailure("get", sessionId, result);
-        }
+        logIfFailed("get", sessionId, result);
         return result;
     }
 
@@ -102,31 +97,22 @@ public isolated class Memory {
         if messages.length() == 0 {
             return;
         }
-        [string, string]|Error keys = resolveSessionKey(self.sessionKeyConfig, sessionId);
-        if keys is Error {
-            logAgentCoreFailure("update", sessionId, keys);
-            return keys;
-        }
-        var [actorId, agentSessionId] = keys;
+        [string, string] [actorId, agentSessionId] = check self.resolveKeys("update", sessionId);
         decimal eventTimestamp = self.nextEventTimestamp();
         Error? result = writeTurn(self.agentCoreClient, self.memoryId, actorId, agentSessionId, messages, eventTimestamp);
-        if result is Error {
-            logAgentCoreFailure("update", sessionId, result);
-        }
+        logIfFailed("update", sessionId, result);
         return result;
     }
 
-    # Deletes a session's history, per the configured `DeleteMode`.
+    # Deletes a session's history, per the configured `DeleteMode`, along with any pending
+    # human-in-the-loop approval for the session, so an abandoned pause does not keep its history
+    # snapshot around. The history and checkpoint removals are separate AgentCore calls and are not
+    # atomic; if the checkpoint removal fails, the error is returned and it can be retried.
     #
     # + sessionId - The session key
     # + return - `()` on success, or an `ai:MemoryError`
     public isolated function delete(string sessionId) returns ai:MemoryError? {
-        [string, string]|Error keys = resolveSessionKey(self.sessionKeyConfig, sessionId);
-        if keys is Error {
-            logAgentCoreFailure("delete", sessionId, keys);
-            return keys;
-        }
-        var [actorId, agentSessionId] = keys;
+        [string, string] [actorId, agentSessionId] = check self.resolveKeys("delete", sessionId);
         decimal eventTimestamp = self.nextEventTimestamp();
         Error? result;
         if self.deleteMode == SOFT {
@@ -134,9 +120,61 @@ public isolated class Memory {
         } else {
             result = purgeSession(self.agentCoreClient, self.memoryId, actorId, agentSessionId, eventTimestamp);
         }
-        if result is Error {
-            logAgentCoreFailure("delete", sessionId, result);
+        if result is () {
+            result = clearCheckpoint(self.agentCoreClient, self.memoryId, actorId, checkpointSessionId(agentSessionId));
         }
+        logIfFailed("delete", sessionId, result);
+        return result;
+    }
+
+    # Stores (or replaces) the pending human-in-the-loop approval for its session.
+    #
+    # + approval - The pending approval to persist
+    # + return - `()` on success, or an `Error`
+    public isolated function putCheckpoint(ai:PendingApproval approval) returns Error? {
+        [string, string] [actorId, agentSessionId] = check self.resolveKeys("putCheckpoint", approval.sessionId);
+        decimal eventTimestamp = self.nextEventTimestamp();
+        Error? result = writeCheckpoint(self.agentCoreClient, self.memoryId, actorId,
+            checkpointSessionId(agentSessionId), approval, eventTimestamp);
+        logIfFailed("putCheckpoint", approval.sessionId, result);
+        return result;
+    }
+
+    # Returns the pending human-in-the-loop approval for a session, if any.
+    #
+    # + sessionId - The session key
+    # + return - The pending approval, `()` if none is pending, or an `Error`
+    public isolated function getCheckpoint(string sessionId) returns ai:PendingApproval?|Error {
+        [string, string] [actorId, agentSessionId] = check self.resolveKeys("getCheckpoint", sessionId);
+        ai:PendingApproval?|Error result =
+            readCheckpoint(self.agentCoreClient, self.memoryId, actorId, checkpointSessionId(agentSessionId));
+        logIfFailed("getCheckpoint", sessionId, result);
+        return result;
+    }
+
+    # Removes the pending human-in-the-loop approval for a session, if any.
+    #
+    # + sessionId - The session key
+    # + return - `()` on success, or an `Error`
+    public isolated function removeCheckpoint(string sessionId) returns Error? {
+        [string, string] [actorId, agentSessionId] = check self.resolveKeys("removeCheckpoint", sessionId);
+        Error? result = clearCheckpoint(self.agentCoreClient, self.memoryId, actorId, checkpointSessionId(agentSessionId));
+        logIfFailed("removeCheckpoint", sessionId, result);
+        return result;
+    }
+
+    # Fetches and removes the pending human-in-the-loop approval for a session, if any, so that of
+    # several concurrent resumes for the same session only one can claim it (see `checkpoint.bal`
+    # for how the claim works and its one known gap).
+    #
+    # + sessionId - The session key
+    # + return - The claimed pending approval, `()` if none was pending or another caller claimed
+    # it first, or an `Error`
+    public isolated function takeCheckpoint(string sessionId) returns ai:PendingApproval?|Error {
+        [string, string] [actorId, agentSessionId] = check self.resolveKeys("takeCheckpoint", sessionId);
+        ai:PendingApproval?|Error result =
+            claimCheckpoint(self.agentCoreClient, self.memoryId, actorId, checkpointSessionId(agentSessionId));
+        logIfFailed("takeCheckpoint", sessionId, result);
         return result;
     }
 
@@ -145,6 +183,12 @@ public isolated class Memory {
     # + return - An `Error` if releasing resources fails, or `()`
     public isolated function close() returns Error? {
         return self.agentCoreClient.close();
+    }
+
+    private isolated function resolveKeys(string operation, string sessionId) returns [string, string]|Error {
+        [string, string]|Error keys = resolveSessionKey(self.sessionKeyConfig, sessionId);
+        logIfFailed(operation, sessionId, keys);
+        return keys;
     }
 
     // AgentCore's `eventTimestamp` is client-supplied and `ListEvents` documents no ordering

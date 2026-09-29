@@ -20,6 +20,22 @@ import ballerina/log;
 // logs/traces as this module's own addition rather than a stored message.
 const string RECALL_MESSAGE_NAME = "long_term_memory";
 
+// The `ballerina/ai` release this package targets declares the four checkpoint methods on
+// `ai:Memory` itself; the 1.15.0 build it currently compiles against does not yet. Until the
+// dependency moves, the delegate's checkpoint methods are reached through this structural type.
+// Once it does, this type, the `is` checks, and `checkpointsUnsupported` collapse into plain
+// `self.delegate.<method>(...)` calls.
+type CheckpointingMemory isolated object {
+    *ai:Memory;
+    public isolated function putCheckpoint(ai:PendingApproval approval) returns ai:Error?;
+    public isolated function getCheckpoint(string sessionId) returns ai:PendingApproval?|ai:Error;
+    public isolated function removeCheckpoint(string sessionId) returns ai:Error?;
+    public isolated function takeCheckpoint(string sessionId) returns ai:PendingApproval?|ai:Error;
+};
+
+isolated function checkpointsUnsupported() returns Error =>
+    error Error("The memory wrapped by RecallAugmentedMemory does not support human-in-the-loop checkpoints.");
+
 # Wraps an `ai:Memory` to additionally search long-term memory on every `get` call and append the
 # results as an extra message, as an alternative to the tool-based `LongTermMemoryToolKit` that
 # lets the LLM decide when to search.
@@ -44,6 +60,7 @@ const string RECALL_MESSAGE_NAME = "long_term_memory";
 # `instruction` on every run, discarding anything else stored there - so that approach silently
 # had no effect at all. Appending a new message instead survives, because `ai:Agent` only ever
 # rewrites index `0`.
+@display {label: "Amazon Bedrock AgentCore Recall-Augmented Memory"}
 public isolated class RecallAugmentedMemory {
     *ai:Memory;
 
@@ -64,7 +81,9 @@ public isolated class RecallAugmentedMemory {
     # + config - The namespaces/variables/topK to search with, in the same shape
     # `LongTermMemoryToolKit` uses
     # + return - An `Error` if the underlying client fails to initialize or `config` is invalid
-    public isolated function init(ai:Memory delegate, ConnectionConfig connectionConfig, string memoryId,
+    public isolated function init(@display {label: "Memory"} ai:Memory delegate,
+            @display {label: "Connection Configuration"} ConnectionConfig connectionConfig,
+            @display {label: "Memory ID"} string memoryId,
             *LongTermMemoryToolKitConfig config) returns Error? {
         if config.namespaces.length() == 0 {
             return error Error("RecallAugmentedMemory requires at least one namespace.");
@@ -133,6 +152,54 @@ public isolated class RecallAugmentedMemory {
     # + return - `()` on success, or an `ai:MemoryError`
     public isolated function delete(string sessionId) returns ai:MemoryError? {
         return self.delegate.delete(sessionId);
+    }
+
+    # Delegates unchanged to the wrapped memory.
+    #
+    # + approval - The pending approval to persist
+    # + return - `()` on success, or an `ai:Error`
+    public isolated function putCheckpoint(ai:PendingApproval approval) returns ai:Error? {
+        ai:Memory delegate = self.delegate;
+        if delegate is CheckpointingMemory {
+            return delegate.putCheckpoint(approval);
+        }
+        return checkpointsUnsupported();
+    }
+
+    # Delegates unchanged to the wrapped memory.
+    #
+    # + sessionId - The session key
+    # + return - The pending approval, `()` if none is pending, or an `ai:Error`
+    public isolated function getCheckpoint(string sessionId) returns ai:PendingApproval?|ai:Error {
+        ai:Memory delegate = self.delegate;
+        if delegate is CheckpointingMemory {
+            return delegate.getCheckpoint(sessionId);
+        }
+        return checkpointsUnsupported();
+    }
+
+    # Delegates unchanged to the wrapped memory.
+    #
+    # + sessionId - The session key
+    # + return - `()` on success, or an `ai:Error`
+    public isolated function removeCheckpoint(string sessionId) returns ai:Error? {
+        ai:Memory delegate = self.delegate;
+        if delegate is CheckpointingMemory {
+            return delegate.removeCheckpoint(sessionId);
+        }
+        return checkpointsUnsupported();
+    }
+
+    # Delegates unchanged to the wrapped memory.
+    #
+    # + sessionId - The session key
+    # + return - The claimed pending approval, `()` if none was pending, or an `ai:Error`
+    public isolated function takeCheckpoint(string sessionId) returns ai:PendingApproval?|ai:Error {
+        ai:Memory delegate = self.delegate;
+        if delegate is CheckpointingMemory {
+            return delegate.takeCheckpoint(sessionId);
+        }
+        return checkpointsUnsupported();
     }
 
     # Releases the resources held by this wrapper's own search client. Does not close the

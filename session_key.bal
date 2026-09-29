@@ -68,6 +68,15 @@ isolated function logIfSanitized(string idKind, string raw, string sanitized) re
 # + return - `[actorId, sessionId]`, both already sanitized for safe use in a URI path segment and
 # in AgentCore's own id patterns, or an `Error` if `sessionId` cannot be resolved under `config`
 isolated function resolveSessionKey(SessionKeyConfig config, string sessionId) returns [string, string]|Error {
+    [string, string] keys = check splitSessionKey(config, sessionId);
+    if keys[1].startsWith(CHECKPOINT_SESSION_PREFIX) {
+        return error Error(string `Invalid session key: '${sessionId}'. Session ids must not start with ` +
+            string `'${CHECKPOINT_SESSION_PREFIX}', which is reserved for checkpoint storage.`);
+    }
+    return keys;
+}
+
+isolated function splitSessionKey(SessionKeyConfig config, string sessionId) returns [string, string]|Error {
     if config is FixedActorSessionKeyConfig {
         if sessionId.length() == 0 {
             return error Error("Invalid session key: session key must not be empty.");

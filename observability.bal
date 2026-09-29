@@ -44,3 +44,9 @@ isolated function logAgentCoreFailure(string operation, string sessionId, Error 
         }
     }
 }
+
+isolated function logIfFailed(string operation, string sessionId, any|error result) {
+    if result is Error {
+        logAgentCoreFailure(operation, sessionId, result);
+    }
+}
